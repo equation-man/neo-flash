@@ -162,7 +162,7 @@ impl<'a> Loan<'a> {
         // Verifies the repay instruction references the same loan account.
         // Account at index 1 is expected to be the loan account it is compared to the actual
         // loan account passed to the current instruction
-        if unsafe { instruction.get_account_meta_at_unchecked(1).key } != *self.accounts.loan.address() {
+        if unsafe { instruction.get_instruction_account_at_unchecked(1).key.clone() } != *self.accounts.loan.address() {
             return Err(ProgramError::InvalidInstructionData);
         }
 

@@ -55,12 +55,15 @@ impl<'a> Repay<'a> {
         for i in 0..loan_num {
             // Validating that the protocol_ata is the same as the one in the loan account.
             let protocol_token_account = &self.accounts.token_accounts[i];
+            // Pointer to the offset where the loan LoanData starts
             if unsafe { *(loan_data.as_ptr().add(i * size_of::<LoanData>()) as *const [u8; 32]) } != protocol_token_account.address().to_bytes() {
                 return Err(ProgramError::InvalidAccountData);
             }
             // Check if the loan is already repaid
             let balance = get_token_amount(&protocol_token_account.try_borrow()?, &protocol_token_account)?;
+            // Checking the second field of loan data or the final balance.
             let loan_balance = unsafe { *(loan_data.as_ptr().add(i * size_of::<LoanData>() + size_of::<[u8; 32]>()) as *const u64) };
+            // Checking if the final balance is greater than or equal to the original amount.
             if balance < loan_balance {
                 return Err(ProgramError::InvalidAccountData);
             }
