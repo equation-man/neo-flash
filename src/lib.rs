@@ -6,6 +6,7 @@ use pinocchio::{
     AccountView, entrypoint, error::ProgramError,
     ProgramResult, Address,
 };
+use pinocchio::nostd_panic_handler;
 use pinocchio_pubkey::declare_id;
 use pinocchio_log::log;
 
@@ -16,6 +17,7 @@ use instructions::{
     helpers::*,
 };
 
+nostd_panic_handler!();
 declare_id!("DnWWkqtWVwv5bVc4mnnvxMvZZUsuYNCpZQHGPixbqm4v");
 entrypoint!(process_instruction);
 fn process_instruction(_program_id: &Address, accounts: &[AccountView], instruction_data: &[u8]) -> ProgramResult {
