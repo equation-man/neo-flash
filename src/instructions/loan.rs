@@ -1,5 +1,5 @@
 //! Initiating the loan
-use pinocchio::{ AccountView, error::ProgramError, ProgramResult };
+use pinocchio::{ Address, AccountView, error::ProgramError, ProgramResult };
 use pinocchio::sysvars::{
     instructions::{ Instructions, INSTRUCTIONS_ID },
     rent::Rent, Sysvar, 
@@ -8,6 +8,8 @@ use pinocchio::cpi::{Signer, Seed};
 use pinocchio_system::instructions::CreateAccount;
 use pinocchio_token::instructions::{ Transfer };
 use pinocchio_token::ID;
+use pinocchio_log::log;
+use solana_address;
 use crate::instructions::helpers::{pubkey_eq, LoanData, get_token_amount};
 use crate::instructions::repay::Repay;
 
@@ -115,26 +117,32 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
 impl<'a> Loan<'a> {
     pub const DISCRIMINATOR: &'a u8 = &0;
     pub fn process(&mut self) -> ProgramResult {
+        log!("Running the loan instruction");
         // Get the fee
-        let fee = self.instruction_data.fee.to_le_bytes();
+        let fee_bytes = self.instruction_data.fee.to_le_bytes();
+        let (expected_loan_pda, loan_pda_bump) = Address::find_program_address(
+                &[b"loan", self.accounts.protocol.address().as_ref()], &crate::ID.into()
+            );
+        let loan_bump = [loan_pda_bump];
         // Get the signer seeds
         let signer_seeds = [
-            Seed::from("protocol".as_bytes()),
-            Seed::from(&fee),
-            Seed::from(&self.instruction_data.bump),
+            Seed::from("loan".as_bytes()),
+            Seed::from(self.accounts.protocol.address().as_ref()),
+            Seed::from(&loan_bump),
         ];
         let signer_seeds = [Signer::from(&signer_seeds)];
         // Open the LoanData account and create a mutable slice to push the Loan struct to it
         let size = size_of::<LoanData>() * self.instruction_data.amounts.len();
         let lamports = Rent::get()?.minimum_balance(size);
-
+        log!("Creating account");
         CreateAccount {
             from: self.accounts.borrower,
             to: self.accounts.loan,
             lamports,
             space: size as u64,
             owner: &ID,
-        }.invoke()?;
+        }.invoke_signed(&signer_seeds)?;
+        log!("Account created. About to create loan entries");
         // Mutable slice from the loan account's data which we populate as we process the loans and
         // their corresponding transfer.
         // Here we have the structure [u8, u8, u8, u8, etc..]
@@ -146,6 +154,7 @@ impl<'a> Loan<'a> {
                 self.instruction_data.amounts.len()
             )
         };
+        log!("Loan entries created. Introspecting the repay instruction");
 
         // Introspecting the Repay instruction 
         let instruction_sysvar = unsafe {
@@ -193,6 +202,7 @@ impl<'a> Loan<'a> {
                 amount: *amount,
             }.invoke_signed(&signer_seeds)?;
         }
+        log!("Loan instruction ran successfully");
         Ok(())
     }
 }

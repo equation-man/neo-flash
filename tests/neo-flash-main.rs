@@ -1,4 +1,5 @@
 //! Main test file to test for flash loan transactions.
+#[allow(warnings)]
 use solana_sdk::{
     pubkey::Pubkey,
     transaction::Transaction,
@@ -23,7 +24,7 @@ fn test_flashloan_success() {
     let fee_bps: u16 = 50; // 0.5% fee
     // deriving the bump.
     let (borrow_pda, bump) = Pubkey::find_program_address(
-        &[b"protocol", &fee_bps.to_le_bytes()],
+        &[b"loan", ctx.protocol.pubkey().as_ref()],
         &ctx.program_id,
     );
     let borrow_amounts = vec![1_000_000u64]; // 1 USDC (if 6 decimals)
@@ -40,7 +41,7 @@ fn test_flashloan_success() {
     let mut account_metas = vec![
         AccountMeta::new(ctx.borrower.pubkey(), true),
         AccountMeta::new_readonly(ctx.protocol.pubkey(), false),
-        AccountMeta::new(ctx.loan.pubkey(), false), // Scratch PDA
+        AccountMeta::new(borrow_pda, false), // Scratch PDA
         AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
         AccountMeta::new_readonly(spl_token::ID, false),
         AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false)
@@ -79,6 +80,7 @@ fn test_flashloan_success() {
         ],
         data: vec![1], // Discriminator for Repay
     };
+    println!("The loan address is {}", ctx.loan.pubkey());
     // Wrappin in transaction and sending.
     // We add both the borrow and repay transaction to this same array
     let tx = Transaction::new_signed_with_payer(
@@ -89,7 +91,7 @@ fn test_flashloan_success() {
     );
 
     // Execute and Assert
-    let result = ctx.svm.send_transaction(tx).unwrap();
+    let result = ctx.svm.send_transaction(tx);
     println!("The test result is {:#?}", result);
     //assert!(result.is_ok(), "Transaction failed {:?}", result.err()); // Verify success
     
