@@ -74,13 +74,13 @@ fn test_flashloan_success() {
         program_id: ctx.program_id,
         accounts: vec![
             AccountMeta::new(ctx.borrower.pubkey(), true),
-            AccountMeta::new(ctx.loan.pubkey(), false),
+            AccountMeta::new(borrow_pda, false),
             // Repay logic expects only protocol vaults in its trailing slice
             AccountMeta::new_readonly(ctx.protocol_token, false),
         ],
         data: vec![1], // Discriminator for Repay
     };
-    println!("The loan address is {}", ctx.loan.pubkey());
+    println!("The loan address is {}", borrow_pda);
     // Wrappin in transaction and sending.
     // We add both the borrow and repay transaction to this same array
     let tx = Transaction::new_signed_with_payer(

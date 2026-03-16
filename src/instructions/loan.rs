@@ -147,6 +147,7 @@ impl<'a> Loan<'a> {
         // their corresponding transfer.
         // Here we have the structure [u8, u8, u8, u8, etc..]
         let mut loan_data = self.accounts.loan.try_borrow_mut()?;
+        log!("Assigning loan entries");
         // results into the structure [LoanData, LoanData, LoanData, etc..]
         let loan_entries = unsafe {
             core::slice::from_raw_parts_mut(
@@ -161,39 +162,51 @@ impl<'a> Loan<'a> {
             Instructions::new_unchecked(self.accounts.instruction_sysvar.try_borrow()?)
         };
         let num_instructions = instruction_sysvar.num_instructions();
+        log!("Loading the last instruction from sysvar");
         let instruction = instruction_sysvar.load_instruction_at(num_instructions as usize - 1)?;
+        log!("Checking the last instruction ID");
         if instruction.get_program_id().to_bytes() != crate::ID {
             return Err(ProgramError::InvalidInstructionData);
         }
+        log!("Checking the last instruction discriminator");
         if unsafe { *(instruction.get_instruction_data().as_ptr()) } != *Repay::DISCRIMINATOR {
             return Err(ProgramError::InvalidInstructionData);
         }
         // Verifies the repay instruction references the same loan account.
         // Account at index 1 is expected to be the loan account it is compared to the actual
         // loan account passed to the current instruction
-        if unsafe { instruction.get_instruction_account_at_unchecked(1).key.clone() } != *self.accounts.loan.address() {
+        log!("Checking the last instruction references the same loan instruction");
+        let repay_acc = unsafe {
+            instruction.get_instruction_account_at_unchecked(1)
+        };
+        if repay_acc.key != *self.accounts.loan.address() {
             return Err(ProgramError::InvalidInstructionData);
         }
 
+        log!("Begin processing transfers");
         // Processing the transfers
         for (i, amount) in self.instruction_data.amounts.iter().enumerate() {
             let protocol_token_account = &self.accounts.token_accounts[i * 2];
             let borrower_token_account = &self.accounts.token_accounts[i * 2 + 1];
             // Get the balance of the protocol's token account plus fee that remains after the loan
             // is repaid back. That is basically initial pool value (before loan) plus fee.
+            log!("Getting the protocol token amount");
             let balance = get_token_amount(&protocol_token_account.try_borrow()?, &protocol_token_account)?;
             // Flash loan fee calculation typically uses basis points.
             // fee_amount = amount * fee / 10_000
+            log!("Computing protocol token amount with fee");
             let balance_with_fee = balance.checked_add(
                 amount.checked_mul(self.instruction_data.fee as u64)
                 .and_then(|x| x.checked_div(10_000))
                 .ok_or(ProgramError::InvalidInstructionData)?
             ).ok_or(ProgramError::InvalidInstructionData)?;
             // Push the loan struct into the loan account.
+            log!("Creating the loan entries");
             loan_entries[i] = LoanData {
                 protocol_token_account: protocol_token_account.address().to_bytes(),
                 balance: balance_with_fee,
             };
+            log!("Transfer instruction is here");
             // Transfer tokens from the protocol to the borrower
             Transfer {
                 from: protocol_token_account,

@@ -73,10 +73,12 @@ impl<'a> Repay<'a> {
         // Closing the loan account an giving back the lamports to the borrower.
         // SAFELY tranfer lamports back to borrower
         let loan_lamports = self.accounts.loan.lamports();
-        let borrower_lamports = self.accounts.borrower.lamports();
+        self.accounts.loan.set_lamports(0);
         self.accounts.borrower.set_lamports(
-                borrower_lamports.checked_add(loan_lamports).ok_or(ProgramError::ArithmeticOverflow)?
-            );
+            self.accounts.borrower.lamports()
+            .checked_add(loan_lamports)
+            .ok_or(ProgramError::ArithmeticOverflow)?
+        );
         self.accounts.loan.set_lamports(0);
         // Close the loan account, this zeroes out data and marks it closed.
         unsafe {
