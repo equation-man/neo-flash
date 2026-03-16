@@ -1,2 +1,2 @@
 # NEO FLASH  
-Self liquidation flash loan program for liqudating unhealthy loan positions.
+Flash loan program for testing the Mega AMM stableswap protocol.
