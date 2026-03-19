@@ -9,6 +9,7 @@ use pinocchio::{AccountView, Address, ProgramResult, error::ProgramError};
 use crate::instructions::helpers::{
     LoanData, get_token_amount,
 };
+use pinocchio_log::log;
 
 pub struct RepayAccounts<'a> {
     // Who requsted the loan
@@ -84,6 +85,7 @@ impl<'a> Repay<'a> {
         unsafe {
             self.accounts.loan.close_unchecked();
         }
+        log!("The repay instruction is successful");
         Ok(())
     }
 }

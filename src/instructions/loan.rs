@@ -18,7 +18,7 @@ pub struct LoanAccounts<'a> {
     // User requesting the flash loan. Must be a signer
     pub borrower: &'a AccountView,
     // PDA that owns the protocol's liquidity pool for a specific fee
-    pub protocol: &'a AccountView,
+    pub protocol_pda: &'a AccountView,
     // "Scratch" account used to save the protocol_token_account and final balance it 
     // needs to have. Must be mutable.
     pub loan: &'a AccountView,
@@ -32,7 +32,7 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
         // Here, token accounts come last because they are variable length list.
         // token_program and system program are passed by the client when building the transaction
-        let [borrower, protocol, loan, instruction_sysvar, _token_program, _system_program, token_accounts @ ..] = accounts else {
+        let [borrower, protocol_pda, loan, instruction_sysvar, _token_program, _system_program, token_accounts @ ..] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         // Check if this is the right sysvar account
@@ -49,7 +49,7 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
             return Err(ProgramError::InvalidAccountData);
         }
         Ok(Self {
-            borrower, protocol, loan, instruction_sysvar, token_accounts
+            borrower, protocol_pda, loan, instruction_sysvar, token_accounts
         })
     }
 }
@@ -117,37 +117,36 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
 impl<'a> Loan<'a> {
     pub const DISCRIMINATOR: &'a u8 = &0;
     pub fn process(&mut self) -> ProgramResult {
-        log!("Running the loan instruction");
         // Get the fee
         let fee_bytes = self.instruction_data.fee.to_le_bytes();
         let (expected_loan_pda, loan_pda_bump) = Address::find_program_address(
-                &[b"loan", self.accounts.protocol.address().as_ref()], &crate::ID.into()
+                &[b"loan", self.accounts.protocol_pda.address().as_ref()], &crate::ID.into()
             );
         let loan_bump = [loan_pda_bump];
         // Get the signer seeds
         let signer_seeds = [
             Seed::from("loan".as_bytes()),
-            Seed::from(self.accounts.protocol.address().as_ref()),
+            Seed::from(self.accounts.protocol_pda.address().as_ref()),
             Seed::from(&loan_bump),
         ];
         let signer_seeds = [Signer::from(&signer_seeds)];
         // Open the LoanData account and create a mutable slice to push the Loan struct to it
         let size = size_of::<LoanData>() * self.instruction_data.amounts.len();
         let lamports = Rent::get()?.minimum_balance(size);
-        log!("Creating account");
         CreateAccount {
             from: self.accounts.borrower,
             to: self.accounts.loan,
             lamports,
             space: size as u64,
-            owner: &ID,
+            owner: &crate::ID.into(),
         }.invoke_signed(&signer_seeds)?;
-        log!("Account created. About to create loan entries");
+        if expected_loan_pda != *self.accounts.loan.address() {
+            return Err(ProgramError::InvalidAccountData);
+        }
         // Mutable slice from the loan account's data which we populate as we process the loans and
         // their corresponding transfer.
         // Here we have the structure [u8, u8, u8, u8, etc..]
         let mut loan_data = self.accounts.loan.try_borrow_mut()?;
-        log!("Assigning loan entries");
         // results into the structure [LoanData, LoanData, LoanData, etc..]
         let loan_entries = unsafe {
             core::slice::from_raw_parts_mut(
@@ -155,27 +154,22 @@ impl<'a> Loan<'a> {
                 self.instruction_data.amounts.len()
             )
         };
-        log!("Loan entries created. Introspecting the repay instruction");
 
         // Introspecting the Repay instruction 
         let instruction_sysvar = unsafe {
             Instructions::new_unchecked(self.accounts.instruction_sysvar.try_borrow()?)
         };
         let num_instructions = instruction_sysvar.num_instructions();
-        log!("Loading the last instruction from sysvar");
         let instruction = instruction_sysvar.load_instruction_at(num_instructions as usize - 1)?;
-        log!("Checking the last instruction ID");
         if instruction.get_program_id().to_bytes() != crate::ID {
             return Err(ProgramError::InvalidInstructionData);
         }
-        log!("Checking the last instruction discriminator");
         if unsafe { *(instruction.get_instruction_data().as_ptr()) } != *Repay::DISCRIMINATOR {
             return Err(ProgramError::InvalidInstructionData);
         }
         // Verifies the repay instruction references the same loan account.
         // Account at index 1 is expected to be the loan account it is compared to the actual
         // loan account passed to the current instruction
-        log!("Checking the last instruction references the same loan instruction");
         let repay_acc = unsafe {
             instruction.get_instruction_account_at_unchecked(1)
         };
@@ -183,37 +177,47 @@ impl<'a> Loan<'a> {
             return Err(ProgramError::InvalidInstructionData);
         }
 
-        log!("Begin processing transfers");
         // Processing the transfers
         for (i, amount) in self.instruction_data.amounts.iter().enumerate() {
-            let protocol_token_account = &self.accounts.token_accounts[i * 2];
+            let protocol_pda_token_account = &self.accounts.token_accounts[i * 2];
             let borrower_token_account = &self.accounts.token_accounts[i * 2 + 1];
             // Get the balance of the protocol's token account plus fee that remains after the loan
             // is repaid back. That is basically initial pool value (before loan) plus fee.
-            log!("Getting the protocol token amount");
-            let balance = get_token_amount(&protocol_token_account.try_borrow()?, &protocol_token_account)?;
+            let balance = get_token_amount(&protocol_pda_token_account.try_borrow()?, &protocol_pda_token_account)?;
             // Flash loan fee calculation typically uses basis points.
             // fee_amount = amount * fee / 10_000
-            log!("Computing protocol token amount with fee");
             let balance_with_fee = balance.checked_add(
                 amount.checked_mul(self.instruction_data.fee as u64)
                 .and_then(|x| x.checked_div(10_000))
                 .ok_or(ProgramError::InvalidInstructionData)?
             ).ok_or(ProgramError::InvalidInstructionData)?;
             // Push the loan struct into the loan account.
-            log!("Creating the loan entries");
             loan_entries[i] = LoanData {
-                protocol_token_account: protocol_token_account.address().to_bytes(),
+                protocol_pda_token_account: protocol_pda_token_account.address().to_bytes(),
                 balance: balance_with_fee,
             };
+            log!("Protocol pda checks");
+            let (protocol_pda, protocol_bump) = Address::find_program_address(
+                    &[b"protocol"], &crate::ID.into()
+                );
+            let protocol_decons_bump = [protocol_bump];
+            if protocol_pda != *self.accounts.protocol_pda.address() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            // Get the signer seeds
+            let protocol_seeds = [
+                Seed::from("protocol".as_bytes()),
+                Seed::from(&protocol_decons_bump),
+            ];
+            let protocol_signer_seeds = [Signer::from(&protocol_seeds)];
             log!("Transfer instruction is here");
             // Transfer tokens from the protocol to the borrower
             Transfer {
-                from: protocol_token_account,
+                from: protocol_pda_token_account,
                 to: borrower_token_account,
-                authority: self.accounts.protocol,
+                authority: self.accounts.protocol_pda,
                 amount: *amount,
-            }.invoke_signed(&signer_seeds)?;
+            }.invoke_signed(&protocol_signer_seeds)?;
         }
         log!("Loan instruction ran successfully");
         Ok(())

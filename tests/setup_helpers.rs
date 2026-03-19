@@ -16,7 +16,7 @@ use spl_token::{
 pub struct NeoFlashTestContext {
     pub svm: LiteSVM,
     pub borrower: Keypair,
-    pub protocol: Keypair,
+    pub protocol_pda: Pubkey,
     pub loan: Keypair,
     pub mint: Pubkey,
     pub protocol_token: Pubkey,
@@ -37,11 +37,17 @@ pub fn setup_neo_flash_context() -> NeoFlashTestContext {
     // Giving borrower SOL for transactions fees
     svm.airdrop(&borrower.pubkey(), 5_000_000_000).unwrap();
 
+    // =========== protocol PDA will own the vault containing the liquidity  ========
+    let (protocol_pda, protocol_bump) = Pubkey::find_program_address(
+        &[b"protocol"],
+        &program_id,
+    );
+
     // =====================Create mint: Owned by the token program====================
     let mint = Keypair::new();
     // creating the mint account state.
     let mint_state = Mint {
-        mint_authority: Some(protocol.pubkey()).into(),
+        mint_authority: Some(protocol_pda).into(),
         supply: 1_000_000_000,
         decimals: 6,
         is_initialized: true, // Initializing the accounts
@@ -67,7 +73,7 @@ pub fn setup_neo_flash_context() -> NeoFlashTestContext {
     // Token account state
     let protocol_token_state = TokenAccount {
         mint: mint.pubkey(),
-        owner: protocol.pubkey(),
+        owner: protocol_pda, // The pda owns the vault
         amount: 1_000_000_000, // Inititial liquidity
         state: spl_token::state::AccountState::Initialized,
         ..Default::default()
@@ -106,27 +112,27 @@ pub fn setup_neo_flash_context() -> NeoFlashTestContext {
             rent_epoch: 0,
         }
     ).unwrap();
-    let init_borrower_token_ix = token_instruction::initialize_account(
-        &TOKEN_PROGRAM_ID, &borrower_token.pubkey(), &mint.pubkey(), &borrower.pubkey()
-    ).unwrap();
+    //let init_borrower_token_ix = token_instruction::initialize_account(
+    //    &TOKEN_PROGRAM_ID, &borrower_token.pubkey(), &mint.pubkey(), &borrower.pubkey()
+    //).unwrap();
 
     // Mint liquidity into protocol vault. Requires protocol (mint authority) signature
-    let mint_to_ix = token_instruction::mint_to(
-        &TOKEN_PROGRAM_ID, &mint.pubkey(), &protocol_token.pubkey(), &protocol.pubkey(), &[], 1_000_000_000
-    ).unwrap();
-    let tx = Transaction::new_signed_with_payer(
-        &[mint_to_ix],
-        Some(&borrower.pubkey()), // BOrrower pays for the setup transaction
-        &[&borrower, &protocol], // Protocol must sign to authrize mint
-        svm.latest_blockhash()
-    );
-    svm.send_transaction(tx).unwrap();
+    //let mint_to_ix = token_instruction::mint_to(
+    //    &TOKEN_PROGRAM_ID, &mint.pubkey(), &protocol_token.pubkey(), &protocol_pda, &[], 1_000_000_000
+    //).unwrap();
+    //let tx = Transaction::new_signed_with_payer(
+    //    &[mint_to_ix],
+    //    Some(&borrower.pubkey()), // BOrrower pays for the setup transaction
+    //    &[&borrower], // Protocol must sign to authrize mint
+    //    svm.latest_blockhash()
+    //);
+    //svm.send_transaction(tx).unwrap();
 
     NeoFlashTestContext {
         svm,
         borrower,
         // Authority controlling the pool
-        protocol,
+        protocol_pda,
         // Scratch PDA used to store LoanData
         loan,
         // SPL token used for the flash loan

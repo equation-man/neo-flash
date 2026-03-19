@@ -17,14 +17,13 @@ use crate::setup_helpers::{
 fn test_flashloan_success() {
     // Testing a successful flash loan.
     let mut ctx = setup_neo_flash_context();
-
     // ======================== BORROW INSTRUCTION ================================
     // Instruction data preparation.
     // specify bump, fee, fee, amounts.
     let fee_bps: u16 = 50; // 0.5% fee
     // deriving the bump.
-    let (borrow_pda, bump) = Pubkey::find_program_address(
-        &[b"loan", ctx.protocol.pubkey().as_ref()],
+    let (loan, bump) = Pubkey::find_program_address(
+        &[b"loan", ctx.protocol_pda.as_ref()],
         &ctx.program_id,
     );
     let borrow_amounts = vec![1_000_000u64]; // 1 USDC (if 6 decimals)
@@ -36,12 +35,11 @@ fn test_flashloan_success() {
         borrow_data.extend_from_slice(&amt.to_le_bytes());
     }
     
-    
     // Defining the account pairs. i.e [protocol_vault, borrower_token,..]
     let mut account_metas = vec![
         AccountMeta::new(ctx.borrower.pubkey(), true),
-        AccountMeta::new_readonly(ctx.protocol.pubkey(), false),
-        AccountMeta::new(borrow_pda, false), // Scratch PDA
+        AccountMeta::new_readonly(ctx.protocol_pda, false),
+        AccountMeta::new(loan, false), // Scratch PDA
         AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
         AccountMeta::new_readonly(spl_token::ID, false),
         AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false)
@@ -74,13 +72,12 @@ fn test_flashloan_success() {
         program_id: ctx.program_id,
         accounts: vec![
             AccountMeta::new(ctx.borrower.pubkey(), true),
-            AccountMeta::new(borrow_pda, false),
+            AccountMeta::new(loan, false),
             // Repay logic expects only protocol vaults in its trailing slice
             AccountMeta::new_readonly(ctx.protocol_token, false),
         ],
         data: vec![1], // Discriminator for Repay
     };
-    println!("The loan address is {}", borrow_pda);
     // Wrappin in transaction and sending.
     // We add both the borrow and repay transaction to this same array
     let tx = Transaction::new_signed_with_payer(
@@ -96,7 +93,7 @@ fn test_flashloan_success() {
     //assert!(result.is_ok(), "Transaction failed {:?}", result.err()); // Verify success
     
     // Verify the loan account was closed and lamports returned.
-    let loan_account_after = ctx.svm.get_account(&ctx.loan.pubkey());
+    let loan_account_after = ctx.svm.get_account(&loan);
     //assert!(loan_account_after.is_none(), "Loan account should be closed and deleted.");
     println!("The account after loan is {:#?}", loan_account_after);
 }

@@ -4,7 +4,7 @@ use pinocchio::{ AccountView, Address, error::ProgramError };
 
 #[repr(C, packed)]
 pub struct LoanData {
-    pub protocol_token_account: [u8; 32],
+    pub protocol_pda_token_account: [u8; 32],
     pub balance: u64,
 }
 
