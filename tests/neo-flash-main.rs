@@ -89,11 +89,11 @@ fn test_flashloan_success() {
 
     // Execute and Assert
     let result = ctx.svm.send_transaction(tx);
-    println!("The test result is {:#?}", result);
-    //assert!(result.is_ok(), "Transaction failed {:?}", result.err()); // Verify success
+    //println!("The test result is {:#?}", result);
+    assert!(result.is_ok(), "Transaction failed {:?}", result.err()); // Verify success
     
     // Verify the loan account was closed and lamports returned.
     let loan_account_after = ctx.svm.get_account(&loan);
-    //assert!(loan_account_after.is_none(), "Loan account should be closed and deleted.");
-    println!("The account after loan is {:#?}", loan_account_after);
+    assert!(loan_account_after.is_none(), "Loan account should be closed and deleted.");
+    //println!("The account after loan is {:#?}", loan_account_after);
 }

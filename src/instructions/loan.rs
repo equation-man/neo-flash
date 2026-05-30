@@ -18,12 +18,15 @@ pub struct LoanAccounts<'a> {
     // User requesting the flash loan. Must be a signer
     pub borrower: &'a AccountView,
     // PDA that owns the protocol's liquidity pool for a specific fee
+    // This pda controls the protocol's fees pool.
     pub protocol_pda: &'a AccountView,
-    // "Scratch" account used to save the protocol_token_account and final balance it 
-    // needs to have. Must be mutable.
+    // Token address for protocol_token_account in "scratch" account.
+    // Tells the protocol token taken as fee. This is also the token taken as loan.
+    // Must be mutable.
     pub loan: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
     // Token program. Must be executable
+    // Entered in pairs. i.e protocol vault(takes fee) and the user account.
     pub token_accounts: &'a [AccountView],
 }
 
@@ -58,6 +61,7 @@ pub struct LoanInstructionData<'a> {
     // Used to derive the protocol's PDA instead of using the find_program_address() function
     // to save compute units. Client precomputes and sends it.
     pub bump: [u8; 1],
+    pub loan_idx: u8,
     // Fee rate in basis points that the users pay for borrowing
     pub fee: u16,
     // Dynamic array of loan amounts. User can request multiple loans in one transaction
@@ -69,6 +73,8 @@ impl<'a> TryFrom<&'a [u8]> for LoanInstructionData<'a> {
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
         // Getting the bump
         let (bump, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
+        // Extract the loan index.
+        let (loan_idx, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
         // Get the fee
         let (fee, data) = data.split_at_checked(size_of::<u16>()).ok_or(ProgramError::InvalidInstructionData)?;
         // Verify that the data is valid and also, must divide evenly
@@ -87,6 +93,7 @@ impl<'a> TryFrom<&'a [u8]> for LoanInstructionData<'a> {
         };
         Ok(Self {
             bump: [*bump],
+            loan_idx: *loan_idx,
             fee: u16::from_le_bytes(fee.try_into().map_err(|_| ProgramError::InvalidInstructionData)?),
             amounts,
         })
@@ -119,18 +126,25 @@ impl<'a> Loan<'a> {
     pub fn process(&mut self) -> ProgramResult {
         // Get the fee
         let fee_bytes = self.instruction_data.fee.to_le_bytes();
+        // The borrower can borrow multiple loans
+        // We use a nonce to separate each loan. The nonce must be deterministic.
+        // We use index from the frontend as nonce.
         let (expected_loan_pda, loan_pda_bump) = Address::find_program_address(
-                &[b"loan", self.accounts.protocol_pda.address().as_ref()], &crate::ID.into()
+                &[b"loan", self.accounts.borrower.address().as_ref(), &self.instruction_data.loan_idx.to_le_bytes()],
+                &crate::ID.into()
             );
         let loan_bump = [loan_pda_bump];
+        let loan_idx_binding = self.instruction_data.loan_idx.to_le_bytes();
         // Get the signer seeds
         let signer_seeds = [
             Seed::from("loan".as_bytes()),
-            Seed::from(self.accounts.protocol_pda.address().as_ref()),
+            Seed::from(self.accounts.borrower.address().as_ref()),
+            Seed::from(&loan_idx_binding),
             Seed::from(&loan_bump),
         ];
         let signer_seeds = [Signer::from(&signer_seeds)];
-        // Open the LoanData account and create a mutable slice to push the Loan struct to it
+        // Open the LoanData account and create a mutable slice to push the Loan struct to it.
+        // Multiple loans can be taken. LoanData accounts = amount of loans taken
         let size = size_of::<LoanData>() * self.instruction_data.amounts.len();
         let lamports = Rent::get()?.minimum_balance(size);
         CreateAccount {

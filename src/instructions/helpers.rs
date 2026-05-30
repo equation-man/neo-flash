@@ -2,9 +2,13 @@
 //! before the loan is repaid.
 use pinocchio::{ AccountView, Address, error::ProgramError };
 
+// This is for a scratch account to store loan details.
+// This account is created every time a loan is taken to temporarily store loan details.
 #[repr(C, packed)]
 pub struct LoanData {
+    // The flash loan protocol's token account where fee goes to.
     pub protocol_pda_token_account: [u8; 32],
+    // Final balance the protocol needs to have after fee payment.
     pub balance: u64,
 }
 
