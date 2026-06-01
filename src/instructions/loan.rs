@@ -15,7 +15,7 @@ use crate::instructions::repay::Repay;
 
 
 pub struct LoanAccounts<'a> {
-    // User requesting the flash loan. Must be a signer
+    // User requesting the flash loan. Profits are deposited here. Must be a signer
     pub borrower: &'a AccountView,
     // PDA that owns the protocol's liquidity pool for a specific fee
     // This pda controls the protocol's fees pool.
@@ -23,7 +23,7 @@ pub struct LoanAccounts<'a> {
     // Token address for protocol_token_account in "scratch" account.
     // Tells the protocol token taken as fee. This is also the token taken as loan.
     // Must be mutable.
-    pub loan: &'a AccountView,
+    //pub loan: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
     // Token program. Must be executable
     // Entered in pairs. i.e protocol vault(takes fee) and the user account.
@@ -35,67 +35,70 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
         // Here, token accounts come last because they are variable length list.
         // token_program and system program are passed by the client when building the transaction
-        let [borrower, protocol_pda, loan, instruction_sysvar, _token_program, _system_program, token_accounts @ ..] = accounts else {
+        let [borrower, protocol_pda, instruction_sysvar, _token_program, _system_program, token_accounts @ ..] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         // Check if this is the right sysvar account
         if !pubkey_eq(instruction_sysvar.address(), &INSTRUCTIONS_ID) {
             return Err(ProgramError::UnsupportedSysvar);
         }
-        // Verify that the number of token accounts is valid
+        // Verify that the number of token accounts are valid
         // They are entered in pairs i.e protocol_vault_1 and user_account_1 etc
         if (token_accounts.len() % 2).ne(&0) || token_accounts.len().eq(&0) {
             return Err(ProgramError::InvalidAccountData);
         }
         // Ensures the scratch account is empty to prevent state injection attack
-        if loan.try_borrow()?.len().ne(&0) {
-            return Err(ProgramError::InvalidAccountData);
-        }
+        //if loan.try_borrow()?.len().ne(&0) {
+            //return Err(ProgramError::InvalidAccountData);
+        //}
         Ok(Self {
-            borrower, protocol_pda, loan, instruction_sysvar, token_accounts
+            borrower, protocol_pda, instruction_sysvar, token_accounts
         })
     }
 }
 
 pub struct LoanInstructionData<'a> {
+    // Loan amount the user is taking 
+    pub amounts: &'a u64,
+    // Fee rate in basis points that the users pay for borrowing
+    pub fee: u16,
+    pub loan_idx: u8,
     // Used to derive the protocol's PDA instead of using the find_program_address() function
     // to save compute units. Client precomputes and sends it.
     pub bump: [u8; 1],
-    pub loan_idx: u8,
-    // Fee rate in basis points that the users pay for borrowing
-    pub fee: u16,
-    // Dynamic array of loan amounts. User can request multiple loans in one transaction
-    pub amounts: &'a [u64],
 }
 
 impl<'a> TryFrom<&'a [u8]> for LoanInstructionData<'a> {
     type Error = ProgramError;
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
         // Getting the bump
-        let (bump, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
+        let (amounts, data) = data.split_at_checked(size_of::<u64>()).ok_or(ProgramError::InvalidInstructionData)?;
         // Extract the loan index.
-        let (loan_idx, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
-        // Get the fee
         let (fee, data) = data.split_at_checked(size_of::<u16>()).ok_or(ProgramError::InvalidInstructionData)?;
+        // Get the fee
+        let (loan_idx, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
         // Verify that the data is valid and also, must divide evenly
-        if data.len() % size_of::<u64>() != 0 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
+        //if data.len() % size_of::<u64>() != 0 {
+        //    return Err(ProgramError::InvalidInstructionData);
+        //}
         // Get the amounts
         // This converts  &[u8] to & [u64] without copying memory. It is unsafe because rust 
         // cannot guarantee alignment and correct memory layout. But here it's safe since
         // we validated data.len() % 8 == 0. This saves memory, cu and heap allocations
-        let amounts: &[u64] = unsafe {
-            core::slice::from_raw_parts(
-                data.as_ptr() as *const u64,
-                data.len() / size_of::<u64>()
-            )
-        };
+        //let amounts: &[u64] = unsafe {
+        //    core::slice::from_raw_parts(
+        //        data.as_ptr() as *const u64,
+        //        data.len() / size_of::<u64>()
+        //    )
+        //};
+        if amounts == 0 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         Ok(Self {
-            bump: [*bump],
-            loan_idx: *loan_idx,
-            fee: u16::from_le_bytes(fee.try_into().map_err(|_| ProgramError::InvalidInstructionData)?),
             amounts,
+            fee: u16::from_le_bytes(fee.try_into().map_err(|_| ProgramError::InvalidInstructionData)?),
+            loan_idx: *loan_idx,
+            bump: [*data],
         })
     }
 }
@@ -154,20 +157,22 @@ impl<'a> Loan<'a> {
             space: size as u64,
             owner: &crate::ID.into(),
         }.invoke_signed(&signer_seeds)?;
-        if expected_loan_pda != *self.accounts.loan.address() {
-            return Err(ProgramError::InvalidAccountData);
-        }
+        //if expected_loan_pda != *self.accounts.loan.address() {
+            //return Err(ProgramError::InvalidAccountData);
+        //}
         // Mutable slice from the loan account's data which we populate as we process the loans and
         // their corresponding transfer.
         // Here we have the structure [u8, u8, u8, u8, etc..]
-        let mut loan_data = self.accounts.loan.try_borrow_mut()?;
+        // let mut loan_data = self.accounts.loan.try_borrow_mut()?;
         // results into the structure [LoanData, LoanData, LoanData, etc..]
-        let loan_entries = unsafe {
-            core::slice::from_raw_parts_mut(
-                loan_data.as_mut_ptr() as *mut LoanData,
-                self.instruction_data.amounts.len()
-            )
-        };
+        //let loan_entries = unsafe {
+        //    core::slice::from_raw_parts_mut(
+        //        loan_data.as_mut_ptr() as *mut LoanData,
+        //        self.instruction_data.amounts.len()
+        //    )
+        //};
+
+        // Fetch and populate the loan meta data PDA.
 
         // Introspecting the Repay instruction 
         let instruction_sysvar = unsafe {

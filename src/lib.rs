@@ -23,6 +23,7 @@ entrypoint!(process_instruction);
 fn process_instruction(_program_id: &Address, accounts: &[AccountView], instruction_data: &[u8]) -> ProgramResult {
     match instruction_data.split_first() {
         Some((Loan::DISCRIMINATOR, data)) => Loan::try_from((data, accounts))?.process(),
+        // MEV logic for the flash loan goes here
         Some((Repay::DISCRIMINATOR, _)) => Repay::try_from(accounts)?.process(),
         _ => Err(ProgramError::InvalidInstructionData)
     }

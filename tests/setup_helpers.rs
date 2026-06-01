@@ -15,9 +15,12 @@ use spl_token::{
 
 pub struct NeoFlashTestContext {
     pub svm: LiteSVM,
+    // User requesting the flash loan. Is a signer. This is the wallet the loan is requested from.
     pub borrower: Keypair,
+    // Protocol's liquidity pool where fees are stored.
     pub protocol_pda: Pubkey,
-    pub loan: Keypair,
+    // Token  address of the protocol_token_account to be taken as a loan.
+    pub loan: Pubkey,
     pub mint: Pubkey,
     pub protocol_token: Pubkey,
     pub borrower_token: Pubkey,

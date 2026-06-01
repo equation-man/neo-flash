@@ -1,3 +1,4 @@
+//! This file contain the protocol's utilities such as necessary PDAs.
 //! Loan data struct is used to temporarily store loan data in an account 
 //! before the loan is repaid.
 use pinocchio::{ AccountView, Address, error::ProgramError };
@@ -30,4 +31,14 @@ pub fn get_token_amount(data: &[u8], account: &AccountView) -> Result<u64, Progr
 pub fn pubkey_eq(a: &Address, b: &Address) -> bool {
     // Direct slice comparison is highle optimized in Solana's BPF.
     a.as_ref() == b.as_ref()
+}
+
+// This is the protocol's configuration state.
+pub struct ProtocolConfigState {
+    // Percentage fee that the protocol takes on every transaction.
+    pub fee_bps: u16,
+    // The protocol's update authority.
+    pub authority: [u8; 32],
+    // The treasury or wallet where the fees are collected to.
+    pub treasury: [u8, 32],
 }
