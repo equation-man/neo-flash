@@ -15,7 +15,7 @@ pub struct ProtocolInitAccounts<'a> {
     // The protocol's treasury
     pub treasury: &'a AccountView,
     // The system program id
-    pub program_id: &'a AccountView,
+    pub system_program: &'a AccountView,
     // The rent account for PDA creation.
     pub rent: &'a AccountView,
 }
@@ -23,12 +23,13 @@ pub struct ProtocolInitAccounts<'a> {
 impl<'a> TryFrom<&'a [AccountView]> for ProtocolInitAccounts<'a> {
     type Error = ProgramError;
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [authority, treasury, program_id, rent] = accounts else {
+        let [authority, treasury, system_program, rent] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
 
         // Perform a signer check on the program's authority here.
         if !authority.is_signer() {
+            log!("Authority is not signer");
             return Err(ProgramError::InvalidAccountData);
         }
 
@@ -36,7 +37,7 @@ impl<'a> TryFrom<&'a [AccountView]> for ProtocolInitAccounts<'a> {
         //    return Err(ProgramError::UnsupportedSysvar);
         //}
 
-        Ok(Self { authority, treasury, program_id, rent})
+        Ok(Self { authority, treasury, system_program, rent})
     }
 }
 
@@ -54,10 +55,12 @@ impl<'a> TryFrom<&'a [u8]> for ProtocolInitData {
             return Err(ProgramError::InvalidInstructionData);
         }
 
-        let fee_bps = u16::from_le_bytes(data[0..2].try_into().unwrap());
+        let fee_bps = u16::from_le_bytes(data[0..2].try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?);
         let protocol_state = data[2];
 
-        if protocol_state != 0u8 || protocol_state != 1u8 {
+        if protocol_state != 0u8 && protocol_state != 1u8 {
+            log!("Failed validating the protocol state");
             return Err(ProgramError::InvalidInstructionData);
         }
 
@@ -75,6 +78,7 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for ProtocolInitializer<'a> {
     fn try_from((data, accounts): (&'a [u8], &'a [AccountView])) -> Result<Self, Self::Error> {
         let accounts = ProtocolInitAccounts::try_from(accounts)?;
         let instruction_data = ProtocolInitData::try_from(data)?;
+        log!("Instruction data validated successfully");
 
         Ok(Self { accounts, instruction_data })
     }

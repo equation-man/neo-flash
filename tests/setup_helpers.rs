@@ -23,8 +23,6 @@ pub struct NeoFlashConfigContext {
     pub authority: Keypair,
     // The protocol's treasury where fee is stored
     pub treasury: Pubkey,
-    // Read only system account managed only by the network. 
-    pub program_id: Pubkey,
 }
 
 pub fn initialize_protocol() -> NeoFlashConfigContext {
@@ -38,6 +36,9 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     let treasury = Pubkey::new_unique();
     let sysvar_accnt = Pubkey::new_unique();
 
+    // Giving authority SOL for transactions fees
+    svm.airdrop(&authority.pubkey(), 5_000_000_000).unwrap();
+
     // Data needed for the instruction.
     let fee = 5u16;
     let mut instruction_data = vec![0u8];
@@ -48,7 +49,6 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     let accounts = vec![
         AccountMeta::new(authority.pubkey(), true),
         AccountMeta::new(treasury, false),
-        AccountMeta::new(sysvar_accnt, false),
 
         AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
         AccountMeta::new_readonly(solana_sdk::sysvar::rent::ID, false),
@@ -65,7 +65,7 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     println!("The amm initialization is {:#?}", tx_init);
 
     NeoFlashConfigContext {
-        svm, authority, treasury, program_id,
+        svm, authority, treasury,
     }
 }
 

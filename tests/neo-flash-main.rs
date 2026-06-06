@@ -16,7 +16,6 @@ use crate::setup_helpers::{
 #[test]
 fn text_protocol_init() {
     let ctx_init = initialize_protocol();
-    println!("The protocol config authority is {:?}", ctx_init.authority);
 }
 
 //#[test]
