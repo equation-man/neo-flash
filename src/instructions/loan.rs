@@ -125,7 +125,7 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
 }
 
 impl<'a> Loan<'a> {
-    pub const DISCRIMINATOR: &'a u8 = &0;
+    pub const DISCRIMINATOR: &'a u8 = &1;
     pub fn process(&mut self) -> ProgramResult {
         // Get the fee
         let fee_bytes = self.instruction_data.fee.to_le_bytes();

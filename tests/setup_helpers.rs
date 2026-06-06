@@ -2,7 +2,9 @@
 use litesvm::LiteSVM;
 use solana_sdk::{
     account::Account,
+    instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
+    message::Message,
     signature::{ Signer, Keypair},
     transaction::Transaction,
 };
@@ -12,7 +14,62 @@ use spl_token::{
     ID as TOKEN_PROGRAM_ID,
     instruction as token_instruction
 };
+use solana_system_interface::program::ID as SYSTEM_PROGRAM_ID;
 
+// Protocol configuration context.
+pub struct NeoFlashConfigContext {
+    pub svm: LiteSVM,
+    // The protocol's authority
+    pub authority: Keypair,
+    // The protocol's treasury where fee is stored
+    pub treasury: Pubkey,
+    // Read only system account managed only by the network. 
+    pub program_id: Pubkey,
+}
+
+pub fn initialize_protocol() -> NeoFlashConfigContext {
+    let program_id = solana_sdk::pubkey!("DnWWkqtWVwv5bVc4mnnvxMvZZUsuYNCpZQHGPixbqm4v");
+    let bytes = include_bytes!("../target/deploy/neo_flash.so");
+    let mut svm = LiteSVM::new();
+    svm.add_program(program_id, bytes);
+
+    // Accounts needed for the instruction.
+    let authority = Keypair::new();
+    let treasury = Pubkey::new_unique();
+    let sysvar_accnt = Pubkey::new_unique();
+
+    // Data needed for the instruction.
+    let fee = 5u16;
+    let mut instruction_data = vec![0u8];
+    instruction_data.extend_from_slice(&fee.to_le_bytes());
+    // State of the protocol to show whether it has been initialized.
+    instruction_data.push(1u8);
+
+    let accounts = vec![
+        AccountMeta::new(authority.pubkey(), true),
+        AccountMeta::new(treasury, false),
+        AccountMeta::new(sysvar_accnt, false),
+
+        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+        AccountMeta::new_readonly(solana_sdk::sysvar::rent::ID, false),
+    ];
+
+    let instruction = Instruction::new_with_bytes(program_id, &instruction_data, accounts);
+    let tx = Transaction::new(
+        &[&authority],
+        Message::new(&[instruction], Some(&authority.pubkey())),
+        svm.latest_blockhash()
+    );
+
+    let tx_init = svm.send_transaction(tx);
+    println!("The amm initialization is {:#?}", tx_init);
+
+    NeoFlashConfigContext {
+        svm, authority, treasury, program_id,
+    }
+}
+
+// The flash loan context of configuration.
 pub struct NeoFlashTestContext {
     pub svm: LiteSVM,
     // User requesting the flash loan. Is a signer. This is the wallet the loan is requested from.
@@ -137,7 +194,7 @@ pub fn setup_neo_flash_context() -> NeoFlashTestContext {
         // Authority controlling the pool
         protocol_pda,
         // Scratch PDA used to store LoanData
-        loan,
+        loan: loan.pubkey(),
         // SPL token used for the flash loan
         mint: mint.pubkey(),
         // Liquidity pool vault holding funds

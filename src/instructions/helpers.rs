@@ -40,5 +40,5 @@ pub struct ProtocolConfigState {
     // The protocol's update authority.
     pub authority: [u8; 32],
     // The treasury or wallet where the fees are collected to.
-    pub treasury: [u8, 32],
+    pub treasury: [u8; 32],
 }

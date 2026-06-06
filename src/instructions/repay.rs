@@ -45,7 +45,7 @@ impl<'a> TryFrom<&'a [AccountView]> for Repay<'a> {
 }
 
 impl<'a> Repay<'a> {
-    pub const DISCRIMINATOR: &'a u8 = &1;
+    pub const DISCRIMINATOR: &'a u8 = &2;
     pub fn process(&mut self) -> ProgramResult {
         let loan_data = self.accounts.loan.try_borrow()?;
         let loan_num = loan_data.len() / size_of::<LoanData>();

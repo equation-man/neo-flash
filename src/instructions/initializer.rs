@@ -14,23 +14,29 @@ pub struct ProtocolInitAccounts<'a> {
     pub authority: &'a AccountView,
     // The protocol's treasury
     pub treasury: &'a AccountView,
-    pub instruction_sysvar: &'a AccountView,
+    // The system program id
+    pub program_id: &'a AccountView,
+    // The rent account for PDA creation.
+    pub rent: &'a AccountView,
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for ProtocolInitAccounts<'a> {
     type Error = ProgramError;
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [authority, treasury, instruction_sysvar] = accounts else {
+        let [authority, treasury, program_id, rent] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
 
-        // Perform a signer chech on the program's authority here.
-
-        if !pubkey_eq(instruction_sysvar.address(), &INSTRUCTIONS_ID) {
-            return Err(ProgramError::UnsupportedSysvar);
+        // Perform a signer check on the program's authority here.
+        if !authority.is_signer() {
+            return Err(ProgramError::InvalidAccountData);
         }
 
-        Ok(Self { authority, treasury, instruction_sysvar })
+        //if !pubkey_eq(instruction_sysvar.address(), &INSTRUCTIONS_ID) {
+        //    return Err(ProgramError::UnsupportedSysvar);
+        //}
+
+        Ok(Self { authority, treasury, program_id, rent})
     }
 }
 
@@ -38,15 +44,20 @@ pub struct ProtocolInitData {
     // The fee rate in basis points.
     pub fee_bps: u16,
     // The state of the protocol.
-    pub paused: u8,
+    pub protocol_state: u8,
 }
 
 impl<'a> TryFrom<&'a [u8]> for ProtocolInitData {
     type Error = ProgramError;
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        let (fee_bps, protocol_state) = data.split_at_checked(size_of::<u16>()).ok_or(ProgramError::InvalidInstructionData)?;
+        if data.len() != (2 + 1) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
 
-        if protocol_state != 0 || protocol_state != 1 {
+        let fee_bps = u16::from_le_bytes(data[0..2].try_into().unwrap());
+        let protocol_state = data[2];
+
+        if protocol_state != 0u8 || protocol_state != 1u8 {
             return Err(ProgramError::InvalidInstructionData);
         }
 
@@ -56,7 +67,7 @@ impl<'a> TryFrom<&'a [u8]> for ProtocolInitData {
 
 pub struct ProtocolInitializer<'a> {
     pub accounts: ProtocolInitAccounts<'a>,
-    pub instructin_data: ProtocolInitData<'a>,
+    pub instruction_data: ProtocolInitData,
 }
 
 impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for ProtocolInitializer<'a> {
@@ -66,5 +77,13 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for ProtocolInitializer<'a> {
         let instruction_data = ProtocolInitData::try_from(data)?;
 
         Ok(Self { accounts, instruction_data })
+    }
+}
+
+impl<'a> ProtocolInitializer<'a> {
+    pub const DISCRIMINATOR: &'a u8 = &0;
+    pub fn process(&mut self) -> ProgramResult {
+        log!("Initializing the flash loan protocol");
+        Ok(())
     }
 }

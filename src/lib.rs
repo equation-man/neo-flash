@@ -12,9 +12,10 @@ use pinocchio_log::log;
 
 mod instructions;
 use instructions::{
-    loan::*,
-    repay::*,
-    helpers::*,
+    //loan::*,
+    //repay::*,
+    //helpers::*,
+    initializer::*,
 };
 
 nostd_panic_handler!();
@@ -22,9 +23,10 @@ declare_id!("DnWWkqtWVwv5bVc4mnnvxMvZZUsuYNCpZQHGPixbqm4v");
 entrypoint!(process_instruction);
 fn process_instruction(_program_id: &Address, accounts: &[AccountView], instruction_data: &[u8]) -> ProgramResult {
     match instruction_data.split_first() {
-        Some((Loan::DISCRIMINATOR, data)) => Loan::try_from((data, accounts))?.process(),
+        Some((ProtocolInitializer::DISCRIMINATOR, data)) => ProtocolInitializer::try_from((data, accounts))?.process(),
+        //Some((Loan::DISCRIMINATOR, data)) => Loan::try_from((data, accounts))?.process(),
         // MEV logic for the flash loan goes here
-        Some((Repay::DISCRIMINATOR, _)) => Repay::try_from(accounts)?.process(),
+        //Some((Repay::DISCRIMINATOR, _)) => Repay::try_from(accounts)?.process(),
         _ => Err(ProgramError::InvalidInstructionData)
     }
 }
