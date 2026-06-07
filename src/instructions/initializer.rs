@@ -107,6 +107,14 @@ impl<'a> ProtocolInitializer<'a> {
             space: size as u64,
             owner: &crate::ID.into(),
         }.invoke_signed(&signer_seeds)?;
+
+        let config = ProtocolConfigState::load_mut(self.accounts.config)?;
+        config.set_inner(
+            self.instruction_data.fee_bps,
+            self.instruction_data.protocol_state,
+            self.accounts.authority.address().to_bytes(),
+            self.accounts.treasury.address().to_bytes(),
+        );
         Ok(())
     }
 }

@@ -41,6 +41,8 @@ pub struct ProtocolConfigState {
     pub authority: Address,
     // The treasury or wallet where the fees are collected to.
     pub treasury: Address,
+    // The protocol state.
+    pub protocol_state: u8,
 }
 
 impl ProtocolConfigState {
@@ -99,6 +101,8 @@ impl ProtocolConfigState {
     pub fn authority(&self) -> &Address { &self.authority }
     #[inline(always)]
     pub fn treasury(&self) -> &Address { &self.treasury }
+    #[inline(always)]
+    pub fn protocol_state(&self) -> u8 { self.protocol_state }
 
 
     // =================== WRITING DATA ======================
@@ -148,10 +152,17 @@ impl ProtocolConfigState {
     }
 
     #[inline(always)]
-    pub fn set_inner(&mut self, fee_bps: u16, authority: [u8; 32], treasury: [u8; 32]) -> Result<(), ProgramError> {
+    pub fn set_protocol_state(&mut self, state: u8) -> Result<(), ProgramError> {
+        self.protocol_state = state;
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub fn set_inner(&mut self, fee_bps: u16, state: u8, authority: [u8; 32], treasury: [u8; 32]) -> Result<(), ProgramError> {
         self.set_fee(fee_bps);
         self.set_authority(authority);
         self.set_treasury(treasury);
+        self.set_protocol_state(state);
         Ok(())
     }
 }
