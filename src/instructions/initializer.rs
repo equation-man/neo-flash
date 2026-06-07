@@ -51,16 +51,14 @@ pub struct ProtocolInitData {
 impl<'a> TryFrom<&'a [u8]> for ProtocolInitData {
     type Error = ProgramError;
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        if data.len() != (2 + 1) {
+        if data.len() != 3 {
             return Err(ProgramError::InvalidInstructionData);
         }
 
-        let fee_bps = u16::from_le_bytes(data[0..2].try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?);
+        let fee_bps = u16::from_le_bytes([data[0], data[1]]);
         let protocol_state = data[2];
 
-        if protocol_state != 0u8 && protocol_state != 1u8 {
-            log!("Failed validating the protocol state");
+        if protocol_state > 1 {
             return Err(ProgramError::InvalidInstructionData);
         }
 
