@@ -84,7 +84,7 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for ProtocolInitializer<'a> {
 impl<'a> ProtocolInitializer<'a> {
     pub const DISCRIMINATOR: &'a u8 = &0;
     pub fn process(&mut self) -> ProgramResult {
-        log!("Initializing the flash loan protocol");
+
         // Generating the config PDA.
         let (protocol_config_pda, config_pda_bump) = Address::find_program_address(
             &[b"config", self.accounts.treasury.address().as_ref()],
@@ -108,6 +108,7 @@ impl<'a> ProtocolInitializer<'a> {
             owner: &crate::ID.into(),
         }.invoke_signed(&signer_seeds)?;
 
+        // Adding the protocol's configuration.
         let config = ProtocolConfigState::load_mut(self.accounts.config)?;
         config.set_inner(
             self.instruction_data.fee_bps,

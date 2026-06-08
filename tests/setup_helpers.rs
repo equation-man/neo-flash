@@ -36,6 +36,11 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     let treasury = Pubkey::new_unique();
     let sysvar_accnt = Pubkey::new_unique();
 
+    let (config_pda, config_bump) = Pubkey::find_program_address(
+        &[b"config", treasury.as_ref()],
+        &program_id,
+    );
+
     // Giving authority SOL for transactions fees
     svm.airdrop(&authority.pubkey(), 5_000_000_000).unwrap();
 
@@ -50,8 +55,8 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
         AccountMeta::new(authority.pubkey(), true),
         AccountMeta::new(treasury, false),
 
+        AccountMeta::new(config_pda, false),
         AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
-        AccountMeta::new_readonly(solana_sdk::sysvar::rent::ID, false),
     ];
 
     let instruction = Instruction::new_with_bytes(program_id, &instruction_data, accounts);
