@@ -1,4 +1,4 @@
-# NEO FLASH  
+# NEO FLASH SELF FUNDED LIQUIDITY FLASH LOAN   
 Flash loan program for testing the Mega AMM stableswap protocol.  
 
 ## System Engineering Overview.  

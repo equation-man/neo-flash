@@ -10,24 +10,22 @@ use pinocchio_token::instructions::{ Transfer };
 use pinocchio_token::ID;
 use pinocchio_log::log;
 use solana_address;
-use crate::instructions::helpers::{pubkey_eq, LoanData, get_token_amount};
+use crate::instructions::helpers::{ProtocolConfigState, pubkey_eq, get_token_amount};
 use crate::instructions::repay::Repay;
 
 
 pub struct LoanAccounts<'a> {
-    // User requesting the flash loan. Profits are deposited here. Must be a signer
+    // User requesting the flash loan. Must be a signer
     pub borrower: &'a AccountView,
-    // PDA that owns the protocol's liquidity pool for a specific fee
-    // This pda controls the protocol's fees pool.
-    pub protocol_pda: &'a AccountView,
-    // Token address for protocol_token_account in "scratch" account.
-    // Tells the protocol token taken as fee. This is also the token taken as loan.
-    // Must be mutable.
-    //pub loan: &'a AccountView,
+    // Wher the borrowed tokens go.
+    pub borrower_token_account: &'a AccountView,
+    // The configuration account.
+    pub config: &'a AccountView,
+    // The liquidity_vault or source of liquidity.
+    pub liquidity_vault: &'a AccountView,
+    // The liquidity vault PDA for signing loan transfers.
+    pub liquidity_vault_pda: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
-    // Token program. Must be executable
-    // Entered in pairs. i.e protocol vault(takes fee) and the user account.
-    pub token_accounts: &'a [AccountView],
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
@@ -35,77 +33,44 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
         // Here, token accounts come last because they are variable length list.
         // token_program and system program are passed by the client when building the transaction
-        let [borrower, protocol_pda, instruction_sysvar, _token_program, _system_program, token_accounts @ ..] = accounts else {
+        let [borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar, _token_program, _system_program] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         // Check if this is the right sysvar account
         if !pubkey_eq(instruction_sysvar.address(), &INSTRUCTIONS_ID) {
             return Err(ProgramError::UnsupportedSysvar);
         }
-        // Verify that the number of token accounts are valid
-        // They are entered in pairs i.e protocol_vault_1 and user_account_1 etc
-        if (token_accounts.len() % 2).ne(&0) || token_accounts.len().eq(&0) {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // Ensures the scratch account is empty to prevent state injection attack
-        //if loan.try_borrow()?.len().ne(&0) {
-            //return Err(ProgramError::InvalidAccountData);
-        //}
+
         Ok(Self {
-            borrower, protocol_pda, instruction_sysvar, token_accounts
+            borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar
         })
     }
 }
 
-pub struct LoanInstructionData<'a> {
+pub struct LoanInstructionData {
     // Loan amount the user is taking 
-    pub amounts: &'a u64,
-    // Fee rate in basis points that the users pay for borrowing
-    pub fee: u16,
-    pub loan_idx: u8,
-    // Used to derive the protocol's PDA instead of using the find_program_address() function
-    // to save compute units. Client precomputes and sends it.
-    pub bump: [u8; 1],
+    pub amounts: u64,
 }
 
-impl<'a> TryFrom<&'a [u8]> for LoanInstructionData<'a> {
+impl<'a> TryFrom<&'a [u8]> for LoanInstructionData {
     type Error = ProgramError;
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
         // Getting the bump
-        let (amounts, data) = data.split_at_checked(size_of::<u64>()).ok_or(ProgramError::InvalidInstructionData)?;
-        // Extract the loan index.
-        let (fee, data) = data.split_at_checked(size_of::<u16>()).ok_or(ProgramError::InvalidInstructionData)?;
-        // Get the fee
-        let (loan_idx, data) = data.split_first().ok_or(ProgramError::InvalidInstructionData)?;
-        // Verify that the data is valid and also, must divide evenly
-        //if data.len() % size_of::<u64>() != 0 {
-        //    return Err(ProgramError::InvalidInstructionData);
-        //}
-        // Get the amounts
-        // This converts  &[u8] to & [u64] without copying memory. It is unsafe because rust 
-        // cannot guarantee alignment and correct memory layout. But here it's safe since
-        // we validated data.len() % 8 == 0. This saves memory, cu and heap allocations
-        //let amounts: &[u64] = unsafe {
-        //    core::slice::from_raw_parts(
-        //        data.as_ptr() as *const u64,
-        //        data.len() / size_of::<u64>()
-        //    )
-        //};
+        let (amnts, data) = data.split_at_checked(size_of::<u64>()).ok_or(ProgramError::InvalidInstructionData)?;
+        // Amounts will be byte stream i.e [u8]
+        let amounts = u64::from_le_bytes(
+            amnts.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+        );
         if amounts == 0 {
             return Err(ProgramError::InvalidInstructionData);
         }
-        Ok(Self {
-            amounts,
-            fee: u16::from_le_bytes(fee.try_into().map_err(|_| ProgramError::InvalidInstructionData)?),
-            loan_idx: *loan_idx,
-            bump: [*data],
-        })
+        Ok(Self { amounts })
     }
 }
 
 pub struct Loan<'a> {
     pub accounts: LoanAccounts<'a>,
-    pub instruction_data: LoanInstructionData<'a>,
+    pub instruction_data: LoanInstructionData,
 }
 
 impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
@@ -113,11 +78,6 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
     fn try_from((data, accounts): (&'a [u8], &'a [AccountView])) -> Result<Self, Self::Error> {
         let accounts = LoanAccounts::try_from(accounts)?;
         let instruction_data = LoanInstructionData::try_from(data)?;
-        // Verify that the number of amounts matches the number of token accounts
-        // Number of tokens is half the number of token accounts.
-        if instruction_data.amounts.len() != accounts.token_accounts.len() / 2 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
         Ok(Self {
             accounts, instruction_data
         })
@@ -127,58 +87,18 @@ impl<'a> TryFrom<(&'a [u8], &'a [AccountView])> for Loan<'a> {
 impl<'a> Loan<'a> {
     pub const DISCRIMINATOR: &'a u8 = &1;
     pub fn process(&mut self) -> ProgramResult {
-        // Get the fee
-        let fee_bytes = self.instruction_data.fee.to_le_bytes();
-        // The borrower can borrow multiple loans
-        // We use a nonce to separate each loan. The nonce must be deterministic.
-        // We use index from the frontend as nonce.
-        let (expected_loan_pda, loan_pda_bump) = Address::find_program_address(
-                &[b"loan", self.accounts.borrower.address().as_ref(), &self.instruction_data.loan_idx.to_le_bytes()],
-                &crate::ID.into()
-            );
-        let loan_bump = [loan_pda_bump];
-        let loan_idx_binding = self.instruction_data.loan_idx.to_le_bytes();
-        // Get the signer seeds
-        let signer_seeds = [
-            Seed::from("loan".as_bytes()),
-            Seed::from(self.accounts.borrower.address().as_ref()),
-            Seed::from(&loan_idx_binding),
-            Seed::from(&loan_bump),
-        ];
-        let signer_seeds = [Signer::from(&signer_seeds)];
-        // Open the LoanData account and create a mutable slice to push the Loan struct to it.
-        // Multiple loans can be taken. LoanData accounts = amount of loans taken
-        let size = size_of::<LoanData>() * self.instruction_data.amounts.len();
-        let lamports = Rent::get()?.minimum_balance(size);
-        CreateAccount {
-            from: self.accounts.borrower,
-            to: self.accounts.loan,
-            lamports,
-            space: size as u64,
-            owner: &crate::ID.into(),
-        }.invoke_signed(&signer_seeds)?;
-        //if expected_loan_pda != *self.accounts.loan.address() {
-            //return Err(ProgramError::InvalidAccountData);
-        //}
-        // Mutable slice from the loan account's data which we populate as we process the loans and
-        // their corresponding transfer.
-        // Here we have the structure [u8, u8, u8, u8, etc..]
-        // let mut loan_data = self.accounts.loan.try_borrow_mut()?;
-        // results into the structure [LoanData, LoanData, LoanData, etc..]
-        //let loan_entries = unsafe {
-        //    core::slice::from_raw_parts_mut(
-        //        loan_data.as_mut_ptr() as *mut LoanData,
-        //        self.instruction_data.amounts.len()
-        //    )
-        //};
-
-        // Fetch and populate the loan meta data PDA.
+        // Load the config pda.
+        let config = ProtocolConfigState::load(self.accounts.config)?;
+        if config.protocol_state == 0 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
 
         // Introspecting the Repay instruction 
         let instruction_sysvar = unsafe {
             Instructions::new_unchecked(self.accounts.instruction_sysvar.try_borrow()?)
         };
         let num_instructions = instruction_sysvar.num_instructions();
+        // Loading the repay instruction.
         let instruction = instruction_sysvar.load_instruction_at(num_instructions as usize - 1)?;
         if instruction.get_program_id().to_bytes() != crate::ID {
             return Err(ProgramError::InvalidInstructionData);
@@ -186,59 +106,37 @@ impl<'a> Loan<'a> {
         if unsafe { *(instruction.get_instruction_data().as_ptr()) } != *Repay::DISCRIMINATOR {
             return Err(ProgramError::InvalidInstructionData);
         }
-        // Verifies the repay instruction references the same loan account.
-        // Account at index 1 is expected to be the loan account it is compared to the actual
-        // loan account passed to the current instruction
+        // Account we are repay back the loan to.
         let repay_acc = unsafe {
-            instruction.get_instruction_account_at_unchecked(1)
+            instruction.get_instruction_account_at_unchecked(2)
         };
-        if repay_acc.key != *self.accounts.loan.address() {
+        if repay_acc.key != *self.accounts.liquidity_vault.address() {
             return Err(ProgramError::InvalidInstructionData);
         }
 
-        // Processing the transfers
-        for (i, amount) in self.instruction_data.amounts.iter().enumerate() {
-            let protocol_pda_token_account = &self.accounts.token_accounts[i * 2];
-            let borrower_token_account = &self.accounts.token_accounts[i * 2 + 1];
-            // Get the balance of the protocol's token account plus fee that remains after the loan
-            // is repaid back. That is basically initial pool value (before loan) plus fee.
-            let balance = get_token_amount(&protocol_pda_token_account.try_borrow()?, &protocol_pda_token_account)?;
-            // Flash loan fee calculation typically uses basis points.
-            // fee_amount = amount * fee / 10_000
-            let balance_with_fee = balance.checked_add(
-                amount.checked_mul(self.instruction_data.fee as u64)
-                .and_then(|x| x.checked_div(10_000))
-                .ok_or(ProgramError::InvalidInstructionData)?
-            ).ok_or(ProgramError::InvalidInstructionData)?;
-            // Push the loan struct into the loan account.
-            loan_entries[i] = LoanData {
-                protocol_pda_token_account: protocol_pda_token_account.address().to_bytes(),
-                balance: balance_with_fee,
-            };
-            log!("Protocol pda checks");
-            let (protocol_pda, protocol_bump) = Address::find_program_address(
-                    &[b"protocol"], &crate::ID.into()
-                );
-            let protocol_decons_bump = [protocol_bump];
-            if protocol_pda != *self.accounts.protocol_pda.address() {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            // Get the signer seeds
-            let protocol_seeds = [
-                Seed::from("protocol".as_bytes()),
-                Seed::from(&protocol_decons_bump),
-            ];
-            let protocol_signer_seeds = [Signer::from(&protocol_seeds)];
-            log!("Transfer instruction is here");
-            // Transfer tokens from the protocol to the borrower
-            Transfer {
-                from: protocol_pda_token_account,
-                to: borrower_token_account,
-                authority: self.accounts.protocol_pda,
-                amount: *amount,
-            }.invoke_signed(&protocol_signer_seeds)?;
+
+        // This is a self funded flash loan which provides its own liquidity.
+        let (liquidity_pda, liquidity_bump) = Address::find_program_address(
+                &[b"liquidity_pda"], &crate::ID.into()
+            );
+        let liquidity_decons_bump = [liquidity_bump];
+        if liquidity_pda != *self.accounts.liquidity_vault_pda.address() {
+            return Err(ProgramError::InvalidAccountData);
         }
-        log!("Loan instruction ran successfully");
+        // Get the signer seeds
+        let protocol_liquidity_seeds = [
+            Seed::from("liquidity_pda".as_bytes()),
+            Seed::from(&liquidity_decons_bump),
+        ];
+        let protocol_signer_seeds = [Signer::from(&protocol_liquidity_seeds)];
+        log!("Transfer instruction is here");
+        // Transfer tokens from the protocol to the borrower
+        Transfer {
+            from: self.accounts.liquidity_vault,
+            to: self.accounts.borrower_token_account,
+            authority: self.accounts.liquidity_vault_pda,
+            amount: self.instruction_data.amounts,
+        }.invoke_signed(&protocol_signer_seeds)?;
         Ok(())
     }
 }

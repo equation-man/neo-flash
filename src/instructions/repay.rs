@@ -6,28 +6,35 @@
 //! token account in another instruction, such as when performing a swap or executing a series of
 //! CPIs from the arbitrage
 use pinocchio::{AccountView, Address, ProgramResult, error::ProgramError};
-use crate::instructions::helpers::{
-    LoanData, get_token_amount,
+use pinocchio::sysvars::{
+    instructions::{ Instructions }
 };
+use crate::instructions::helpers::{
+    ProtocolConfigState, get_token_amount,
+};
+use crate::instructions::loan::Loan;
 use pinocchio_log::log;
 
 pub struct RepayAccounts<'a> {
     // Who requsted the loan
     pub borrower: &'a AccountView,
-    // Stores protocol_token_account and the final balance
-    pub loan: &'a AccountView,
-    // Protocol token accounts associated with the borrower's loan
-    pub token_accounts: &'a [AccountView],
+    // Where the borrowed tokens went to.
+    pub borrower_token_account: &'a AccountView,
+    // Who offered the loan or temporary liquidity
+    pub liquidity_token_vault: &'a AccountView,
+    // The protocol configuration.
+    pub config: &'a AccountView,
+    pub instruction_sysvar: &'a AccountView,
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for RepayAccounts<'a> {
     type Error = ProgramError;
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [borrower, loan, token_accounts @ ..] = accounts else {
+        let [borrower, borrower_token_account, liquidity_token_vault, config, instruction_sysvar] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         Ok(Self {
-            borrower, loan, token_accounts
+            borrower, borrower_token_account, liquidity_token_vault, config, instruction_sysvar
         })
     }
 }
@@ -47,45 +54,54 @@ impl<'a> TryFrom<&'a [AccountView]> for Repay<'a> {
 impl<'a> Repay<'a> {
     pub const DISCRIMINATOR: &'a u8 = &2;
     pub fn process(&mut self) -> ProgramResult {
-        let loan_data = self.accounts.loan.try_borrow()?;
-        let loan_num = loan_data.len() / size_of::<LoanData>();
-        if loan_num.ne(&self.accounts.token_accounts.len()) {
-            return Err(ProgramError::InvalidAccountData);
+        // Config PDA.
+        let config = ProtocolConfigState::load(self.accounts.config)?;
+        if config.protocol_state == 0 {
+            return Err(ProgramError::InvalidInstructionData);
         }
-        // Process each pair of token accounts (protocol, borrower) with corresponding amounts
-        for i in 0..loan_num {
-            // Validating that the protocol_ata is the same as the one in the loan account.
-            let protocol_token_account = &self.accounts.token_accounts[i];
-            // Pointer to the offset where the loan LoanData starts
-            if unsafe { *(loan_data.as_ptr().add(i * size_of::<LoanData>()) as *const [u8; 32]) } != protocol_token_account.address().to_bytes() {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            // Check if the loan is already repaid
-            let balance = get_token_amount(&protocol_token_account.try_borrow()?, &protocol_token_account)?;
-            // Checking the second field of loan data or the final balance.
-            let loan_balance = unsafe { *(loan_data.as_ptr().add(i * size_of::<LoanData>() + size_of::<[u8; 32]>()) as *const u64) };
-            // Checking if the final balance is greater than or equal to the original amount.
-            if balance < loan_balance {
-                return Err(ProgramError::InvalidAccountData);
-            }
+
+        // Introspecting the Loan instruction to retrieve the loan state for validation.
+        // We had already checked the loan repayment accound in the borrow instruction so we skip
+        // it here.
+        let instruction_sysvar = unsafe {
+            Instructions::new_unchecked(self.accounts.instruction_sysvar.try_borrow()?)
+        };
+        let borrow_ix = instruction_sysvar.load_instruction_at(1)?;
+        if borrow_ix.get_program_id().to_bytes() != crate::ID {
+            return Err(ProgramError::InvalidInstructionData);
         }
-        // Reclaim the loan account and its rent.
-        drop(loan_data);
-        // Closing the loan account an giving back the lamports to the borrower.
-        // SAFELY tranfer lamports back to borrower
-        let loan_lamports = self.accounts.loan.lamports();
-        self.accounts.loan.set_lamports(0);
-        self.accounts.borrower.set_lamports(
-            self.accounts.borrower.lamports()
-            .checked_add(loan_lamports)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-        );
-        self.accounts.loan.set_lamports(0);
-        // Close the loan account, this zeroes out data and marks it closed.
-        unsafe {
-            self.accounts.loan.close_unchecked();
+        if unsafe { *(borrow_ix.get_instruction_data().as_ptr()) } != *Loan::DISCRIMINATOR {
+            return Err(ProgramError::InvalidInstructionData);
         }
-        log!("The repay instruction is successful");
+
+        // Get the balance of the protocol's token account plus fee that remains after the loan
+        // is repaid back. That is basically initial pool value (before loan) plus fee.
+        let initial_balance = get_token_amount(&self.accounts.liquidity_token_vault)?;
+        // Extracting the borrow instruction data slice. This points directly where transaction
+        // data lives
+        let borrow_ix_data = borrow_ix.get_instruction_data();
+        let borrow_amount = unsafe {
+            // Skip the discriminator, and take the transaction data at offset 1
+            let amount_ptr = borrow_ix_data.as_ptr().add(1) as *const u64;
+            // read_unaligned will safely extract the 8 bytes anyway after moving the pointer by a
+            // single byte causing "mis-alignment".
+            // from_le() Will convert the raw little endian byte back to standart native u64.
+            u64::from_le(amount_ptr.read_unaligned())
+        };
+
+        // Flash loan fee calculation typically uses basis points.
+        // fee_amount = amount * fee / 10_000
+        let final_balance = initial_balance.checked_add(
+            borrow_amount.checked_mul(config.fee_bps as u64)
+            .and_then(|x| x.checked_div(10_000))
+            .ok_or(ProgramError::InvalidInstructionData)?
+        ).ok_or(ProgramError::InvalidInstructionData)?;
+
+        // Final balance of the liquidity pool should be greater than initial balance.
+        if final_balance < initial_balance {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
         Ok(())
     }
 }

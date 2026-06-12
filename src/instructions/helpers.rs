@@ -3,27 +3,20 @@
 //! before the loan is repaid.
 use pinocchio::{ AccountView, Address, error::ProgramError };
 
-// This is for a scratch account to store loan details.
-// This account is created every time a loan is taken to temporarily store loan details.
-#[repr(C, packed)]
-pub struct LoanData {
-    // The flash loan protocol's token account where fee goes to.
-    pub protocol_pda_token_account: [u8; 32],
-    // Final balance the protocol needs to have after fee payment.
-    pub balance: u64,
-}
-
 // Read token amount from an account
-pub fn get_token_amount(data: &[u8], account: &AccountView) -> Result<u64, ProgramError> {
+pub fn get_token_amount(account: &AccountView) -> Result<u64, ProgramError> {
+    // Verify ownership against the legacy token program ID
     if !account.owned_by(&pinocchio_token::ID) {
         return Err(ProgramError::InvalidAccountOwner.into());
     }
-    if account.data_len().ne(&pinocchio_token::state::TokenAccount::LEN) {
-        return Err(ProgramError::InvalidAccountData.into());
-    }
+    // Extract underlying data slice
+    let data = account.try_borrow()?;
+
+    // Legacy token accounts are static and should match exactly the base length (165 bytes).
     if data.len() != pinocchio_token::state::TokenAccount::LEN {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Safely slice and parse the amount.
     Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }
 
