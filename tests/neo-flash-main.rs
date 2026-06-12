@@ -1,5 +1,5 @@
 //! Main test file to test for flash loan transactions.
-#[allow(warnings)]
+#![allow(warnings)]
 use solana_sdk::{
     pubkey::Pubkey,
     transaction::Transaction,
@@ -10,12 +10,13 @@ use solana_system_interface::program::ID as SYSTEM_PROGRAM_ID;
 mod setup_helpers;
 use crate::setup_helpers::{
     NeoFlashTestContext, NeoFlashConfigContext, setup_neo_flash_context,
-    get_token_balance, initialize_protocol 
+    get_token_balance, initialize_protocol, init_test_env,
 };
 
 #[test]
 fn text_protocol_init() {
-    let ctx_init = initialize_protocol();
+    let mut ctx_init = initialize_protocol();
+    let test_liquidity_init = init_test_env(ctx_init.svm, ctx_init.program_id);
 }
 
 //#[test]

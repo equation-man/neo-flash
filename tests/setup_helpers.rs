@@ -1,6 +1,13 @@
 //! Setting up the required state for the flash loan test.
+#![allow(warnings)]
 use litesvm::LiteSVM;
+use litesvm_token::{
+    get_spl_account,
+    spl_token::{native_mint::DECIMALS, state::Account as TknAccount},
+    CreateAssociatedTokenAccount, CreateMint, MintTo,
+};
 use solana_sdk::{
+    native_token::LAMPORTS_PER_SOL,
     account::Account,
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
@@ -23,6 +30,7 @@ pub struct NeoFlashConfigContext {
     pub authority: Keypair,
     // The protocol's treasury where fee is stored
     pub treasury: Pubkey,
+    pub program_id: Pubkey,
 }
 
 pub fn initialize_protocol() -> NeoFlashConfigContext {
@@ -70,8 +78,38 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     println!("The amm initialization is {:#?}", tx_init);
 
     NeoFlashConfigContext {
-        svm, authority, treasury,
+        svm, authority, treasury, program_id,
     }
+}
+
+// Seting up the test context.
+// Here we are setting up the source of liquidity and the destination to simulate transaction.
+pub struct TestEnvironment {
+    pub liquidity_vault: Pubkey,
+}
+
+pub fn init_test_env(mut svm: LiteSVM, program_id: Pubkey) {
+    // Generating a mock token mint address and a fee payer.
+    let mint_pubkey = Pubkey::new_unique();
+    let payer = Keypair::new();
+    // Airdropping SOL for fees.
+    svm.airdrop(&payer.pubkey(), 2_000_000_00).unwrap();
+
+    // Deriving the protocol PDA authority.
+    let (protocol_pda, _bump) = Pubkey::find_program_address(&[b"protocol_vault"], &program_id);
+
+    // Create a new SPL token mint with the payer as the mint authority.
+    let mint = CreateMint::new(&mut svm, &payer).authority(&payer.pubkey()).decimals(DECIMALS).send().unwrap();
+
+    let associated_token_account = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint).owner(&protocol_pda).send().unwrap();
+
+    // Mint 100000 tokens to Alice's account.
+    MintTo::new(&mut svm, &payer, &mint, &associated_token_account, 100)
+        .owner(&payer).send().unwrap();
+    // Verify balance.
+    let account: TknAccount = get_spl_account(&svm, &associated_token_account).unwrap();
+    let balance = account.amount;
+    println!("The minted token amount is {}", balance);
 }
 
 // The flash loan context of configuration.
