@@ -171,8 +171,8 @@ pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnviron
     let repay_accounts = vec![
         AccountMeta::new(borrower.pubkey(), true),
         AccountMeta::new(borrower_token_account, false),
-        AccountMeta::new(test_ctx.liquidity_vault, false),
         AccountMeta::new(config_pda, false),
+        AccountMeta::new(test_ctx.liquidity_vault, false),
         AccountMeta::new_readonly(SYSVARS_ID, false),
     ];
 

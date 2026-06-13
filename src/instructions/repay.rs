@@ -67,7 +67,7 @@ impl<'a> Repay<'a> {
         let instruction_sysvar = unsafe {
             Instructions::new_unchecked(self.accounts.instruction_sysvar.try_borrow()?)
         };
-        let borrow_ix = instruction_sysvar.load_instruction_at(1)?;
+        let borrow_ix = instruction_sysvar.load_instruction_at(0)?;
         if borrow_ix.get_program_id().to_bytes() != crate::ID {
             return Err(ProgramError::InvalidInstructionData);
         }

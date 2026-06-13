@@ -109,7 +109,7 @@ impl<'a> Loan<'a> {
         }
         // Account we are repay back the loan to.
         let repay_acc = unsafe {
-            instruction.get_instruction_account_at_unchecked(2)
+            instruction.get_instruction_account_at_unchecked(3)
         };
         if repay_acc.key != *self.accounts.liquidity_vault.address() {
             return Err(ProgramError::InvalidInstructionData);
@@ -130,7 +130,6 @@ impl<'a> Loan<'a> {
             Seed::from(&liquidity_decons_bump),
         ];
         let protocol_signer_seeds = [Signer::from(&protocol_liquidity_seeds)];
-        log!("Transfer instruction is here");
         // Transfer tokens from the protocol to the borrower
         Transfer {
             from: self.accounts.liquidity_vault,
@@ -138,7 +137,6 @@ impl<'a> Loan<'a> {
             authority: self.accounts.liquidity_vault_pda,
             amount: self.instruction_data.amounts,
         }.invoke_signed(&protocol_signer_seeds)?;
-        log!("Transfer is complete here");
         Ok(())
     }
 }

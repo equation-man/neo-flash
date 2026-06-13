@@ -2,6 +2,7 @@
 //! Loan data struct is used to temporarily store loan data in an account 
 //! before the loan is repaid.
 use pinocchio::{ AccountView, Address, error::ProgramError };
+use pinocchio_log::log;
 
 // Read token amount from an account
 pub fn get_token_amount(account: &AccountView) -> Result<u64, ProgramError> {
@@ -43,6 +44,8 @@ impl ProtocolConfigState {
     #[inline(always)]
     pub fn load(account_info: &AccountView) -> Result<&Self, ProgramError> {
         // Load the config data.
+        let size_one = size_of::<ProtocolConfigState>();
+        let size_two = account_info.data_len();
         if account_info.data_len() != size_of::<ProtocolConfigState>() {
             return Err(ProgramError::InvalidAccountData.into());
         }
