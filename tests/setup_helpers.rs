@@ -88,6 +88,7 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
 pub struct TestEnvironment {
     pub liquidity_vault: Pubkey,
     pub liquidity_mint: Pubkey,
+    pub mint_owner: Keypair,
     pub liquidity_amount: u64,
 }
 
@@ -107,7 +108,7 @@ pub fn init_test_env(mut svm: &mut LiteSVM, program_id: Pubkey) -> TestEnvironme
     let associated_token_account = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint).owner(&protocol_liquidity_pda).send().unwrap();
 
     // Mint 100000 tokens to Alice's account.
-    MintTo::new(&mut svm, &payer, &mint, &associated_token_account, 10_000_000)
+    MintTo::new(&mut svm, &payer, &mint, &associated_token_account, 100_000_000)
         .owner(&payer).send().unwrap();
     // Verify balance.
     let account: TknAccount = get_spl_account(&svm, &associated_token_account).unwrap();
@@ -117,6 +118,7 @@ pub fn init_test_env(mut svm: &mut LiteSVM, program_id: Pubkey) -> TestEnvironme
         liquidity_vault: associated_token_account, 
         liquidity_mint: mint,
         liquidity_amount: balance,
+        mint_owner: payer,
     }
 }
 
@@ -126,7 +128,7 @@ pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnviron
 
     // ============== BORROW OPERATION SET UP =================
     // Borrow instruction data.
-    let amount = 555u64;
+    let amount = 500_000u64;
     let mut borrow_instruction_data = vec![1u8];
     borrow_instruction_data.extend_from_slice(&amount.to_le_bytes());
 
@@ -134,6 +136,8 @@ pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnviron
     let borrower_token_account = CreateAssociatedTokenAccount::new(
         &mut loan_ctx.svm, &borrower, &test_ctx.liquidity_mint
     ).owner(&borrower.pubkey()).send().unwrap();
+    // Mint some tokens to the borrowers token account to have some fee to pay for the simulation.
+    MintTo::new(&mut loan_ctx.svm, &test_ctx.mint_owner, &test_ctx.liquidity_mint, &borrower_token_account, 2_000_000).owner(&test_ctx.mint_owner).send().unwrap();
 
     // Deriving the pda for config.
     let (config_pda, bump) = Pubkey::find_program_address(
@@ -174,6 +178,7 @@ pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnviron
         AccountMeta::new(config_pda, false),
         AccountMeta::new(test_ctx.liquidity_vault, false),
         AccountMeta::new_readonly(SYSVARS_ID, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
     ];
 
     let repay_instruction = Instruction::new_with_bytes(

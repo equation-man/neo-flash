@@ -7,8 +7,9 @@
 //! CPIs from the arbitrage
 use pinocchio::{AccountView, Address, ProgramResult, error::ProgramError};
 use pinocchio::sysvars::{
-    instructions::{ Instructions }
+    instructions::Instructions
 };
+use pinocchio_token::instructions::Transfer;
 use crate::instructions::helpers::{
     ProtocolConfigState, get_token_amount,
 };
@@ -25,17 +26,19 @@ pub struct RepayAccounts<'a> {
     // Who offered the loan or temporary liquidity
     pub liquidity_vault: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
+    // Since we are performing token transfer.
+    pub token_program: &'a AccountView,
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for RepayAccounts<'a> {
     type Error = ProgramError;
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [borrower, borrower_token_account, config, liquidity_vault, instruction_sysvar] = accounts else {
+        let [borrower, borrower_token_account, config, liquidity_vault, instruction_sysvar, token_program] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         Ok(Self {
             borrower, borrower_token_account, config,
-            liquidity_vault, instruction_sysvar
+            liquidity_vault, instruction_sysvar, token_program
         })
     }
 }
@@ -77,11 +80,12 @@ impl<'a> Repay<'a> {
 
         // Get the balance of the protocol's token account plus fee that remains after the loan
         // is repaid back. That is basically initial pool value (before loan) plus fee.
-        let initial_balance = get_token_amount(&self.accounts.liquidity_vault)?;
+        //let initial_balance = get_token_amount(&self.accounts.liquidity_vault)?;
+        
         // Extracting the borrow instruction data slice. This points directly where transaction
         // data lives
         let borrow_ix_data = borrow_ix.get_instruction_data();
-        let borrow_amount = unsafe {
+        let borrowed_amount = unsafe {
             // Skip the discriminator, and take the transaction data at offset 1
             let amount_ptr = borrow_ix_data.as_ptr().add(1) as *const u64;
             // read_unaligned will safely extract the 8 bytes anyway after moving the pointer by a
@@ -92,17 +96,24 @@ impl<'a> Repay<'a> {
 
         // Flash loan fee calculation typically uses basis points.
         // fee_amount = amount * fee / 10_000
-        let final_balance = initial_balance.checked_add(
-            borrow_amount.checked_mul(config.fee_bps as u64)
+        let fee_amount = borrowed_amount.checked_mul(config.fee_bps as u64)
             .and_then(|x| x.checked_div(10_000))
-            .ok_or(ProgramError::InvalidInstructionData)?
-        ).ok_or(ProgramError::InvalidInstructionData)?;
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        // We repay the amount borrowed plus fee.
+        let repay_amount = borrowed_amount.checked_add(fee_amount).ok_or(ProgramError::InvalidInstructionData)?;
 
         // Final balance of the liquidity pool should be greater than initial balance.
-        if final_balance < initial_balance {
+        if repay_amount < borrowed_amount {
             return Err(ProgramError::InvalidInstructionData);
         }
 
+        // Repaying back the loan
+        Transfer {
+            from: self.accounts.borrower_token_account,
+            to: self.accounts.liquidity_vault,
+            authority: self.accounts.borrower,
+            amount: repay_amount,
+        }.invoke()?; // Regular invoke since borrower signed the transaction
         Ok(())
     }
 }

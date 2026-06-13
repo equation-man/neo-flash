@@ -6,7 +6,7 @@ use pinocchio::sysvars::{
 };
 use pinocchio::cpi::{Signer, Seed};
 use pinocchio_system::instructions::CreateAccount;
-use pinocchio_token::instructions::{ Transfer };
+use pinocchio_token::instructions::Transfer;
 use pinocchio_token::ID;
 use pinocchio_log::log;
 use solana_address;
