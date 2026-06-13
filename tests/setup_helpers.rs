@@ -154,6 +154,7 @@ pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnviron
         AccountMeta::new(liquidity_vault_pda, false),
         // This account is only readable and cannot be written.
         AccountMeta::new_readonly(SYSVARS_ID, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
     ];
 
     let borrow_instruction = Instruction::new_with_bytes(

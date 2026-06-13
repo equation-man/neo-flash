@@ -26,6 +26,7 @@ pub struct LoanAccounts<'a> {
     // The liquidity vault PDA for signing loan transfers.
     pub liquidity_vault_pda: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
+    pub token_program: &'a AccountView,
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
@@ -33,7 +34,7 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
         // Here, token accounts come last because they are variable length list.
         // token_program and system program are passed by the client when building the transaction
-        let [borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar, _token_program, _system_program] = accounts else {
+        let [borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar, token_program] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         // Check if this is the right sysvar account
@@ -42,7 +43,7 @@ impl<'a> TryFrom<&'a [AccountView]> for LoanAccounts<'a> {
         }
 
         Ok(Self {
-            borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar
+            borrower, borrower_token_account, config, liquidity_vault, liquidity_vault_pda, instruction_sysvar, token_program
         })
     }
 }
@@ -137,6 +138,7 @@ impl<'a> Loan<'a> {
             authority: self.accounts.liquidity_vault_pda,
             amount: self.instruction_data.amounts,
         }.invoke_signed(&protocol_signer_seeds)?;
+        log!("Transfer is complete here");
         Ok(())
     }
 }
