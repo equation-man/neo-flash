@@ -16,6 +16,7 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use solana_program::program_pack::Pack; // Trait to enable Mint::LEN
+use solana_program::sysvar::instructions::ID as SYSVARS_ID;
 use spl_token::{
     state::{Mint, Account as TokenAccount},
     ID as TOKEN_PROGRAM_ID,
@@ -75,7 +76,7 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
     );
 
     let tx_init = svm.send_transaction(tx);
-    println!("The amm initialization is {:#?}", tx_init);
+    //println!("Test initializing the protocol {:#?}", tx_init);
 
     NeoFlashConfigContext {
         svm, authority, treasury, program_id,
@@ -86,9 +87,11 @@ pub fn initialize_protocol() -> NeoFlashConfigContext {
 // Here we are setting up the source of liquidity and the destination to simulate transaction.
 pub struct TestEnvironment {
     pub liquidity_vault: Pubkey,
+    pub liquidity_mint: Pubkey,
+    pub liquidity_amount: u64,
 }
 
-pub fn init_test_env(mut svm: LiteSVM, program_id: Pubkey) {
+pub fn init_test_env(mut svm: &mut LiteSVM, program_id: Pubkey) -> TestEnvironment {
     // Generating a mock token mint address and a fee payer.
     let mint_pubkey = Pubkey::new_unique();
     let payer = Keypair::new();
@@ -96,160 +99,96 @@ pub fn init_test_env(mut svm: LiteSVM, program_id: Pubkey) {
     svm.airdrop(&payer.pubkey(), 2_000_000_00).unwrap();
 
     // Deriving the protocol PDA authority.
-    let (protocol_pda, _bump) = Pubkey::find_program_address(&[b"protocol_vault"], &program_id);
+    let (protocol_liquidity_pda, _bump) = Pubkey::find_program_address(&[b"liquidity_pda"], &program_id);
 
     // Create a new SPL token mint with the payer as the mint authority.
     let mint = CreateMint::new(&mut svm, &payer).authority(&payer.pubkey()).decimals(DECIMALS).send().unwrap();
 
-    let associated_token_account = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint).owner(&protocol_pda).send().unwrap();
+    let associated_token_account = CreateAssociatedTokenAccount::new(&mut svm, &payer, &mint).owner(&protocol_liquidity_pda).send().unwrap();
 
     // Mint 100000 tokens to Alice's account.
-    MintTo::new(&mut svm, &payer, &mint, &associated_token_account, 100)
+    MintTo::new(&mut svm, &payer, &mint, &associated_token_account, 10_000_000)
         .owner(&payer).send().unwrap();
     // Verify balance.
     let account: TknAccount = get_spl_account(&svm, &associated_token_account).unwrap();
     let balance = account.amount;
-    println!("The minted token amount is {}", balance);
-}
 
-// The flash loan context of configuration.
-pub struct NeoFlashTestContext {
-    pub svm: LiteSVM,
-    // User requesting the flash loan. Is a signer. This is the wallet the loan is requested from.
-    pub borrower: Keypair,
-    // Protocol's liquidity pool where fees are stored.
-    pub protocol_pda: Pubkey,
-    // Token  address of the protocol_token_account to be taken as a loan.
-    pub loan: Pubkey,
-    pub mint: Pubkey,
-    pub protocol_token: Pubkey,
-    pub borrower_token: Pubkey,
-    pub program_id: Pubkey,
-}
-
-pub fn setup_neo_flash_context() -> NeoFlashTestContext {
-    let program_id = solana_sdk::pubkey!("DnWWkqtWVwv5bVc4mnnvxMvZZUsuYNCpZQHGPixbqm4v");
-    let bytes = include_bytes!("../target/deploy/neo_flash.so");
-    let mut svm = LiteSVM::new();
-    svm.add_program(program_id, bytes);
-
-    let borrower = Keypair::new();
-    let protocol = Keypair::new();
-    let loan = Keypair::new();
-
-    // Giving borrower SOL for transactions fees
-    svm.airdrop(&borrower.pubkey(), 5_000_000_000).unwrap();
-
-    // =========== protocol PDA will own the vault containing the liquidity  ========
-    let (protocol_pda, protocol_bump) = Pubkey::find_program_address(
-        &[b"protocol"],
-        &program_id,
-    );
-
-    // =====================Create mint: Owned by the token program====================
-    let mint = Keypair::new();
-    // creating the mint account state.
-    let mint_state = Mint {
-        mint_authority: Some(protocol_pda).into(),
-        supply: 1_000_000_000,
-        decimals: 6,
-        is_initialized: true, // Initializing the accounts
-        freeze_authority: None.into(),
-    };
-    // Create the account's byte buffer
-    let mut mint_data = vec![0u8; Mint::LEN];
-    // Serialize the mint_state into that buffer
-    Mint::pack(mint_state, &mut mint_data).unwrap();
-    svm.set_account(
-        mint.pubkey(),
-        Account {
-            lamports: 1_000_000_000,
-            data: mint_data,
-            owner: TOKEN_PROGRAM_ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    ).unwrap();
-
-    // ================ Setup protocol vault =================
-    let protocol_token = Keypair::new();
-    // Token account state
-    let protocol_token_state = TokenAccount {
-        mint: mint.pubkey(),
-        owner: protocol_pda, // The pda owns the vault
-        amount: 1_000_000_000, // Inititial liquidity
-        state: spl_token::state::AccountState::Initialized,
-        ..Default::default()
-    };
-    let mut protocol_token_data = vec![0u8; TokenAccount::LEN];
-    TokenAccount::pack(protocol_token_state, &mut protocol_token_data).unwrap();
-    svm.set_account(
-        protocol_token.pubkey(),
-        Account {
-            lamports: 1_000_000_000,
-            data: protocol_token_data,
-            owner: spl_token::id(), // Standard SPL token program
-            executable: false,
-            rent_epoch: 0,
-        },
-    ).unwrap();
-
-    // ================== Setup borrower token Account ==========================
-    let borrower_token = Keypair::new();
-    let borrower_state = TokenAccount {
-        mint: mint.pubkey(),
-        owner: borrower.pubkey(),
-        amount: 1_000_000_000,
-        state: spl_token::state::AccountState::Initialized,
-        ..Default::default()
-    };
-    let mut borrower_token_data = vec![0u8; TokenAccount::LEN];
-    TokenAccount::pack(borrower_state, &mut borrower_token_data).unwrap();
-    svm.set_account(
-        borrower_token.pubkey(),
-        Account {
-            lamports: 1_000_000_000,
-            data: borrower_token_data,
-            owner: spl_token::id(),
-            executable: false,
-            rent_epoch: 0,
-        }
-    ).unwrap();
-    //let init_borrower_token_ix = token_instruction::initialize_account(
-    //    &TOKEN_PROGRAM_ID, &borrower_token.pubkey(), &mint.pubkey(), &borrower.pubkey()
-    //).unwrap();
-
-    // Mint liquidity into protocol vault. Requires protocol (mint authority) signature
-    //let mint_to_ix = token_instruction::mint_to(
-    //    &TOKEN_PROGRAM_ID, &mint.pubkey(), &protocol_token.pubkey(), &protocol_pda, &[], 1_000_000_000
-    //).unwrap();
-    //let tx = Transaction::new_signed_with_payer(
-    //    &[mint_to_ix],
-    //    Some(&borrower.pubkey()), // BOrrower pays for the setup transaction
-    //    &[&borrower], // Protocol must sign to authrize mint
-    //    svm.latest_blockhash()
-    //);
-    //svm.send_transaction(tx).unwrap();
-
-    NeoFlashTestContext {
-        svm,
-        borrower,
-        // Authority controlling the pool
-        protocol_pda,
-        // Scratch PDA used to store LoanData
-        loan: loan.pubkey(),
-        // SPL token used for the flash loan
-        mint: mint.pubkey(),
-        // Liquidity pool vault holding funds
-        protocol_token: protocol_token.pubkey(),
-        // Token account receiving the loan
-        borrower_token: borrower_token.pubkey(),
-        program_id,
+    TestEnvironment { 
+        liquidity_vault: associated_token_account, 
+        liquidity_mint: mint,
+        liquidity_amount: balance,
     }
 }
 
-pub fn get_token_balance(svm: &LiteSVM, token_account: &Pubkey) -> u64 {
-    let acc = svm.get_account(token_account).unwrap();
-    let token_acc = TokenAccount::unpack(&acc.data).unwrap();
-    token_acc.amount
+pub fn test_borrow_ix(mut loan_ctx: NeoFlashConfigContext, test_ctx: TestEnvironment) {
+    let borrower = Keypair::new();
+    loan_ctx.svm.airdrop(&borrower.pubkey(), 100_000_000).unwrap();
+
+    // ============== BORROW OPERATION SET UP =================
+    // Borrow instruction data.
+    let amount = 555u64;
+    let mut borrow_instruction_data = vec![1u8];
+    borrow_instruction_data.extend_from_slice(&amount.to_le_bytes());
+
+    // ATA for borrower. Stores the borrowed tokens
+    let borrower_token_account = CreateAssociatedTokenAccount::new(
+        &mut loan_ctx.svm, &borrower, &test_ctx.liquidity_mint
+    ).owner(&borrower.pubkey()).send().unwrap();
+
+    // Deriving the pda for config.
+    let (config_pda, bump) = Pubkey::find_program_address(
+        &[b"config", loan_ctx.treasury.as_ref()], &loan_ctx.program_id
+    );
+
+    // Deriving the liquidity vault PDA.
+    let (liquidity_vault_pda, _bump) = Pubkey::find_program_address(
+        &[b"liquidity_pda"], &loan_ctx.program_id
+    );
+
+    // Accounts needed for the borrow instruction are.
+    let borrow_accounts = vec![
+        AccountMeta::new(borrower.pubkey(), true),
+        AccountMeta::new(borrower_token_account, false),
+        AccountMeta::new(config_pda, false),
+        AccountMeta::new(test_ctx.liquidity_vault, false),
+        AccountMeta::new(liquidity_vault_pda, false),
+        // This account is only readable and cannot be written.
+        AccountMeta::new_readonly(SYSVARS_ID, false),
+    ];
+
+    let borrow_instruction = Instruction::new_with_bytes(
+        loan_ctx.program_id,
+        &borrow_instruction_data,
+        borrow_accounts
+    );
+
+    // ================ REPAY OPERATION SET UP ==============
+    //
+    // Repay instruction takes no data. we only have the discriminator.
+    let repay_instruction_data = vec![2u8];
+
+    let repay_accounts = vec![
+        AccountMeta::new(borrower.pubkey(), true),
+        AccountMeta::new(borrower_token_account, false),
+        AccountMeta::new(test_ctx.liquidity_vault, false),
+        AccountMeta::new(config_pda, false),
+        AccountMeta::new_readonly(SYSVARS_ID, false),
+    ];
+
+    let repay_instruction = Instruction::new_with_bytes(
+        loan_ctx.program_id,
+        &repay_instruction_data,
+        repay_accounts
+    );
+
+    // Borrower must sign. It is initiating the loan and paying network fee.
+    let tx = Transaction::new(
+        &[&borrower],
+        Message::new(&[borrow_instruction, repay_instruction], Some(&borrower.pubkey())),
+        loan_ctx.svm.latest_blockhash()
+    );
+
+    let tx_borrow = loan_ctx.svm.send_transaction(tx);
+    println!("The borrow instruction is {:#?}", tx_borrow);
 }
+

@@ -20,21 +20,22 @@ pub struct RepayAccounts<'a> {
     pub borrower: &'a AccountView,
     // Where the borrowed tokens went to.
     pub borrower_token_account: &'a AccountView,
-    // Who offered the loan or temporary liquidity
-    pub liquidity_token_vault: &'a AccountView,
     // The protocol configuration.
     pub config: &'a AccountView,
+    // Who offered the loan or temporary liquidity
+    pub liquidity_vault: &'a AccountView,
     pub instruction_sysvar: &'a AccountView,
 }
 
 impl<'a> TryFrom<&'a [AccountView]> for RepayAccounts<'a> {
     type Error = ProgramError;
     fn try_from(accounts: &'a [AccountView]) -> Result<Self, Self::Error> {
-        let [borrower, borrower_token_account, liquidity_token_vault, config, instruction_sysvar] = accounts else {
+        let [borrower, borrower_token_account, config, liquidity_vault, instruction_sysvar] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
         Ok(Self {
-            borrower, borrower_token_account, liquidity_token_vault, config, instruction_sysvar
+            borrower, borrower_token_account, config,
+            liquidity_vault, instruction_sysvar
         })
     }
 }
@@ -76,7 +77,7 @@ impl<'a> Repay<'a> {
 
         // Get the balance of the protocol's token account plus fee that remains after the loan
         // is repaid back. That is basically initial pool value (before loan) plus fee.
-        let initial_balance = get_token_amount(&self.accounts.liquidity_token_vault)?;
+        let initial_balance = get_token_amount(&self.accounts.liquidity_vault)?;
         // Extracting the borrow instruction data slice. This points directly where transaction
         // data lives
         let borrow_ix_data = borrow_ix.get_instruction_data();
