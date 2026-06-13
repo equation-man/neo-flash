@@ -12,7 +12,8 @@ This flash loan system follows atomic sandwich structure. Where the intended DeF
 This flash loan system acts as the lender for effective and properly controlled test and liquidity provision for testing the system.  
 #### Architecture.  
 1. Borrow -> Verify repay exists -> Issue temporary liquidity.
-2. Repay -> Read borrow instruction -> Verify balances -> Repay back the loan.
+2. Execute MEV strategy.
+3. Repay -> Read borrow instruction -> Verify balances -> Repay back the loan.
 
 ### Initialize instruction.  
 Initializes the protocol, setting up the authority, fee and other protocol configurations.  
