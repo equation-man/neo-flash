@@ -1,7 +1,7 @@
 # NEO FLASH FLUID SIPHON: MODELLING THE DYNAMICS OF A FLASH LOAN SYSTEM
 A siphon uses gravity and pressure differentials to pull fluid out of a high reservoir, pass it through an intermediate system and perform mechanical work, and return it to a low reservoir, all driven by continous weight of the liquid column. If the siphon column breaks, the flow instantly stops and the system reverts to equilibrium. A flash loan works exactly like this continous fluid.  
 
-It temporary gives access to liquidity to a borrower who can then execute MEV strategy, and if anything breaks along the way, the transaction is reverted back to its initial state. In this analogy, the flash loan technically "siphon's" liquidity from the liquidity pool or a lending protocol to give it to a borrower. 
+It temporarily gives access to liquidity to a borrower who can then execute MEV strategy, and if anything breaks along the way, the transaction is reverted back to its initial state. In this analogy, the flash loan technically "siphon's" liquidity from the liquidity pool or a lending protocol to give it to a borrower. 
 
 ## Analogies:  
 - Pool liquidity: The potential energy stored in the water reservoir.
